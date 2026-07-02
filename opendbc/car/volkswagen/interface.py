@@ -154,7 +154,7 @@ class CarInterface(CarInterfaceBase):
 
     if ret.flags & (VolkswagenFlags.MEB | VolkswagenFlags.MQB_EVO):
       ret.longitudinalActuatorDelay = 0.5
-      ret.radarDelay = 0.8
+      ret.radarDelay = 0.2
       #ret.longitudinalTuning.kpBP = [0., 5.]
       ret.longitudinalTuning.kiBP = [0., 30.]
       #ret.longitudinalTuning.kpV = [0.2, 0.] # (with usage of starting state otherwise starting jerk)
