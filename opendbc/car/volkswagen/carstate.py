@@ -297,7 +297,7 @@ class CarState(CarStateBase, MadsCarState):
     # VW Emergency Assist status tracking and mitigation
     self.eps_stock_values = pt_cp.vl["LH_EPS_03"]
     self.klr_stock_values = pt_cp.vl["KLR_01"] if self.CP.flags & VolkswagenFlags.STOCK_KLR_PRESENT else {}
-    ret.carFaultedNonCritical = (cam_cp.vl["EA_01"]["EA_Funktionsstatus"] in (3, 4, 5, 6)) if (self.CP.flags & VolkswagenFlags.STOCK_EA_PRESENT) else False  # FIX: EA_01 not on all cars
+    ret.carFaultedNonCritical = cam_cp.vl["EA_01"]["EA_Funktionsstatus"] in (3, 4, 5, 6) # emergency assist always present also if not coded
 
     # Update gas, brakes, and gearshift.
     #ret.gasPressed   = pt_cp.vl["Motor_54"]["Accelerator_Pressure"] > 0 # MQBevo offset is not reliable (fluctuation or different statically in small range)

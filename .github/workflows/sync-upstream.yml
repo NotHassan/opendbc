@@ -1,0 +1,26 @@
+name: Sync upstream
+on:
+  schedule:
+    - cron: '17 9 * * *'   # daily
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: tiguan-mk3
+          fetch-depth: 0
+
+      - name: Merge upstream master into tiguan-mk3
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git remote add upstream https://github.com/infiniteCable2/opendbc.git
+          git fetch upstream master
+          git merge upstream/master -m "Merge upstream infiniteCable2/opendbc master"
+          git push origin tiguan-mk3
