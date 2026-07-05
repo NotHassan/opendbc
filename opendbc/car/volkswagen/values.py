@@ -117,7 +117,7 @@ class CarControllerParams:
       self.STEER_DRIVER_SLIGHT_PRESS = 15  # Driver torque 0.15 Nm for slight steering override detection
       self.STEER_DRIVER_MAX        = 300   # Driver torque 3.0 Nm, stop steering reduction at MIN
       self.STEERING_POWER_MAX      = 50    # HCA_03 maximum steering power, percentage
-      self.STEERING_POWER_MIN      = 4     # HCA_03 minimum steering power, percentage
+      self.STEERING_POWER_MIN      = 7     # simulated upstream change for conflict test
       self.STEERING_POWER_STEP     = 2     # HCA_03 steering power counter steps
       
       self.CURVATURE_LIMITS: CurvatureSteeringLimits = CurvatureSteeringLimits(
