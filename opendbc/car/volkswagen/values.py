@@ -117,7 +117,7 @@ class CarControllerParams:
       self.STEER_DRIVER_SLIGHT_PRESS = 15  # Driver torque 0.15 Nm for slight steering override detection
       self.STEER_DRIVER_MAX        = 300   # Driver torque 3.0 Nm, stop steering reduction at MIN
       self.STEERING_POWER_MAX      = 50    # HCA_03 maximum steering power, percentage
-      self.STEERING_POWER_MIN      = 4     # HCA_03 minimum steering power, percentage
+      self.STEERING_POWER_MIN      = 18    # HCA_03 minimum steering power, percentage  # TIGUAN: raised 4->18 to reduce on-bend jerk (was 4)
       self.STEERING_POWER_STEP     = 2     # HCA_03 steering power counter steps
       
       self.CURVATURE_LIMITS: CurvatureSteeringLimits = CurvatureSteeringLimits(
@@ -595,6 +595,13 @@ class CAR(Platforms):
     chassis_codes={"GY"},
     wmis={WMI.AUDI_EUROPE_MPV},
     #model_years={"T"},
+    flags=VolkswagenFlags.MQB_EVO_GEN2 | VolkswagenFlags.CLUSTER_NO_TA_LANES,
+  )
+  VOLKSWAGEN_TIGUAN_MK3 = VolkswagenMQBevoPlatformConfig(
+    [VWCarDocs("Volkswagen Tiguan 2025-26")],
+    VolkswagenCarSpecs(mass=1787, wheelbase=2.79),
+    chassis_codes=set(),
+    wmis=set(),
     flags=VolkswagenFlags.MQB_EVO_GEN2 | VolkswagenFlags.CLUSTER_NO_TA_LANES,
   )
   AUDI_Q2_MK1 = VolkswagenMQBPlatformConfig(
