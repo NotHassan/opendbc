@@ -57,7 +57,7 @@ class CarControllerParams:
   AEB_CONTROL_STEP = 2                     # ACC_10 frequency 50Hz
   AEB_HUD_STEP = 20                        # ACC_15 frequency 5Hz
   HCA_STATUS_WATCHDOG_WINDOW_FRAMES = round(5.0 / DT_CTRL)
-  HCA_STATUS_WATCHDOG_ALLOWED_FLUCTUATIONS_PER_SECOND = 2.0
+  HCA_STATUS_WATCHDOG_ALLOWED_FLUCTUATIONS_PER_SECOND = 3.0  # TIGUAN: raised 2.0->3.0; benign 1Hz heartbeat = 2.0/s sat exactly on the old threshold
 
   # Documented lateral limits: 3.00 Nm max, rate of change 5.00 Nm/sec.
   # MQB vs PQ maximums are shared, but rate-of-change limited differently

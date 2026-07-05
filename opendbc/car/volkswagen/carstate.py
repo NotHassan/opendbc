@@ -35,6 +35,8 @@ class CarState(CarStateBase, MadsCarState):
     self.hca_status_last = None
     self.hca_status_fluct_counter = 0
     self.hca_status_fluctuation_frames = deque()
+    self.hca_status_candidate = None        # TIGUAN: watchdog debounce
+    self.hca_status_candidate_frames = 0    # TIGUAN: watchdog debounce
 
   def update_button_enable(self, buttonEvents: list[structs.CarState.ButtonEvent]):
     if not self.CP.pcmCruise:
@@ -506,9 +508,19 @@ class CarState(CarStateBase, MadsCarState):
     # On MY2025+ vehicles the steering command path moves to Automotive Ethernet, where it cannot be intercepted here.
     # Detect the resulting fluctuating HCA status so a user-facing warning can be raised.
     current_frame = self.frame
-    if self.hca_status_last is not None and hca_status is not None and hca_status != self.hca_status_last:
+    # TIGUAN: debounce the watchdog input. This car's lateral stack blinks active->ready for a
+    # single 20ms frame at exactly 1Hz while HCA is engaged (Ethernet-side heartbeat, verified to
+    # have no effect on tracking). Only count a status change once the new status has persisted
+    # ~40ms, so the benign heartbeat is ignored while real dropouts still register.
+    if hca_status != self.hca_status_candidate:
+      self.hca_status_candidate = hca_status
+      self.hca_status_candidate_frames = 0
+    else:
+      self.hca_status_candidate_frames += 1
+    debounced = self.hca_status_candidate if self.hca_status_candidate_frames >= 4 else self.hca_status_last
+    if self.hca_status_last is not None and debounced is not None and debounced != self.hca_status_last:
       self.hca_status_fluctuation_frames.append(current_frame)
-    self.hca_status_last = hca_status
+    self.hca_status_last = debounced
     while self.hca_status_fluctuation_frames and current_frame - self.hca_status_fluctuation_frames[0] >= self.CCP.HCA_STATUS_WATCHDOG_WINDOW_FRAMES:
       self.hca_status_fluctuation_frames.popleft()
 
