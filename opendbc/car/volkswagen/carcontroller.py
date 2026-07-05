@@ -60,6 +60,7 @@ class CarController(CarControllerBase, IntelligentCruiseButtonManagementInterfac
     self.steering_power_last = 0
     self.driver_override_ticks = 0    # TIGUAN: re-engage holdoff after manual override
     self.reengage_holdoff_ticks = 0   # TIGUAN: re-engage holdoff after manual override
+    self.driver_torque_ticks = 0      # TIGUAN: debounce for driver-torque power reduction
     self.accel_last = 0.
     self.long_jerk_control = LongControlJerk(dt=(DT_CTRL * self.CCP.ACC_CONTROL_STEP)) if self.CP.flags & (VolkswagenFlags.MEB | VolkswagenFlags.MQB_EVO) else None
     self.long_limit_control = LongControlLimit(dt=(DT_CTRL * self.CCP.ACC_CONTROL_STEP)) if self.CP.flags & (VolkswagenFlags.MEB | VolkswagenFlags.MQB_EVO) else None
@@ -118,14 +119,23 @@ class CarController(CarControllerBase, IntelligentCruiseButtonManagementInterfac
             self.reengage_holdoff_ticks -= 1
             max_power = min(self.steering_power_last, max_power)
 
-          target_power_driver = int(np.interp(CS.out.steeringTorque, [self.CCP.STEER_DRIVER_ALLOWANCE, self.CCP.STEER_DRIVER_MAX],
-                                                                     [self.CCP.STEERING_POWER_MAX, self.CCP.STEERING_POWER_MIN]))
+          # TIGUAN: debounce the power reduction — bend self-aligning torque crosses the allowance in
+          # ~60ms blips at ~1Hz, and even shallow assist dips visibly disturb tracking (3-7x curvature
+          # error). Only treat torque as a driver override once sustained for ~0.3s.
+          if CS.out.steeringTorque > self.CCP.STEER_DRIVER_ALLOWANCE:
+            self.driver_torque_ticks += 1
+          else:
+            self.driver_torque_ticks = 0
+          effective_torque = CS.out.steeringTorque if self.driver_torque_ticks > 15 else 0.
+          target_power_driver = int(np.interp(effective_torque, [self.CCP.STEER_DRIVER_ALLOWANCE, self.CCP.STEER_DRIVER_MAX],
+                                                                [self.CCP.STEERING_POWER_MAX, self.CCP.STEERING_POWER_MIN]))
           target_power = int(np.interp(CS.out.vEgo, [0., 0.5], [self.CCP.STEERING_POWER_MIN, target_power_driver]))
           steering_power = min(max(target_power, min_power), max_power)
           
         else:
           self.driver_override_ticks = 0   # TIGUAN: holdoff reset
           self.reengage_holdoff_ticks = 0  # TIGUAN: holdoff reset
+          self.driver_torque_ticks = 0     # TIGUAN: debounce reset
           if self.steering_power_last > 0: # keep HCA alive until steering power has reduced to zero
             hca_enabled = True
             apply_curvature = np.clip(CS.out.steeringCurvature, -self.CCP.CURVATURE_LIMITS.CURVATURE_MAX, self.CCP.CURVATURE_LIMITS.CURVATURE_MAX) # synchronize with current curvature
