@@ -104,6 +104,14 @@ class CarController(CarControllerBase, IntelligentCruiseButtonManagementInterfac
           apply_curvature = apply_std_curvature_limits(apply_curvature, self.apply_curvature_last, CS.out.vEgoRaw, CS.out.steeringCurvature,
                                                        CS.out.steeringPressed, self.CCP.STEER_STEP, CC.latActive, self.CCP.CURVATURE_LIMITS)
 
+          # TIGUAN: the Gen2 rack hard-faults (QFK status 6, latching until ignition cycle) when HCA keeps
+          # requesting more curvature at large steering angles (observed onset ~101 deg on a small
+          # roundabout). Back off before the authority limit: beyond 85 deg, never request more
+          # curvature than the rack is currently delivering.
+          if abs(CS.out.steeringAngleDeg) > 85:
+            authority_lim = abs(CS.out.steeringCurvature)
+            apply_curvature = float(np.clip(apply_curvature, -authority_lim, authority_lim))
+
           min_power = max(self.steering_power_last - self.CCP.STEERING_POWER_STEP, self.CCP.STEERING_POWER_MIN)
           max_power = min(self.steering_power_last + self.CCP.STEERING_POWER_STEP, self.CCP.STEERING_POWER_MAX)
 
