@@ -284,11 +284,16 @@ class CarState(CarStateBase, MadsCarState):
     # absent or errored, fall back to torque-only so override can never become unavailable.
     if self.CP.flags & VolkswagenFlags.STOCK_KLR_PRESENT:
       klr = pt_cp.vl["KLR_01"]
-      hands_on = bool(klr["KLR_Fehler"]) or bool(klr["KLR_ResponseError"]) or klr["KLR_Touchauswertung"] >= 7
+      klr_ok = not (bool(klr["KLR_Fehler"]) or bool(klr["KLR_ResponseError"]))
+      touch = klr["KLR_Touchauswertung"] >= 7
+      hands_on = touch or not klr_ok
+      # steeringSlightlyPressed doubles as the capacitive hands-on signal (drives MADS hands-on pause);
+      # falls back to light-torque detection if the touch sensor is errored
+      ret.steeringSlightlyPressed = touch if klr_ok else (abs(ret.steeringTorque) > self.CCP.STEER_DRIVER_SLIGHT_PRESS)
     else:
       hands_on = True
+      ret.steeringSlightlyPressed = abs(ret.steeringTorque) > self.CCP.STEER_DRIVER_SLIGHT_PRESS
     ret.steeringPressed  = self.update_steering_pressed(hands_on and abs(ret.steeringTorque) > 150, 15)
-    ret.steeringSlightlyPressed = abs(ret.steeringTorque) > self.CCP.STEER_DRIVER_SLIGHT_PRESS
     ret.steeringCurvature = -pt_cp.vl["QFK_01"]["Curvature"] * (1, -1)[int(pt_cp.vl["QFK_01"]["Curvature_VZ"])]
     
     ret.yawRate = -pt_cp.vl["ESC_50"]["Yaw_Rate"] * (1, -1)[int(pt_cp.vl["ESC_50"]["Yaw_Rate_Sign"])] * CV.DEG_TO_RAD
