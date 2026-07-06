@@ -104,13 +104,15 @@ class CarController(CarControllerBase, IntelligentCruiseButtonManagementInterfac
           apply_curvature = apply_std_curvature_limits(apply_curvature, self.apply_curvature_last, CS.out.vEgoRaw, CS.out.steeringCurvature,
                                                        CS.out.steeringPressed, self.CCP.STEER_STEP, CC.latActive, self.CCP.CURVATURE_LIMITS)
 
-          # TIGUAN: the Gen2 rack hard-faults (QFK status 6, latching until ignition cycle) when HCA keeps
-          # requesting more curvature at large steering angles (observed onset ~101 deg on a small
-          # roundabout). Back off before the authority limit: beyond 85 deg, never request more
-          # curvature than the rack is currently delivering.
+          # TIGUAN: the Gen2 rack hard-faults (QFK status 6, latching until ignition cycle) when HCA
+          # requests beyond its authority envelope. Observed onsets: ~101 deg on a small roundabout
+          # (angle limit at low speed) and 2.6 m/s^2 lat accel at 14 m/s on an on-ramp (lat-accel
+          # limit at road speed; healthy driving p99 was 2.43). Back off before both limits.
           if abs(CS.out.steeringAngleDeg) > 85:
             authority_lim = abs(CS.out.steeringCurvature)
             apply_curvature = float(np.clip(apply_curvature, -authority_lim, authority_lim))
+          lat_accel_lim = 2.2 / max(CS.out.vEgo ** 2, 1.0)
+          apply_curvature = float(np.clip(apply_curvature, -lat_accel_lim, lat_accel_lim))
 
           min_power = max(self.steering_power_last - self.CCP.STEERING_POWER_STEP, self.CCP.STEERING_POWER_MIN)
           max_power = min(self.steering_power_last + self.CCP.STEERING_POWER_STEP, self.CCP.STEERING_POWER_MAX)
@@ -130,9 +132,9 @@ class CarController(CarControllerBase, IntelligentCruiseButtonManagementInterfac
           # TIGUAN: debounce the power reduction — bend self-aligning torque crosses the allowance in
           # ~60ms blips at ~1Hz, and even shallow assist dips visibly disturb tracking (3-7x curvature
           # error). Only treat torque as a driver override once sustained for ~0.3s.
-          if CS.out.steeringTorque > self.CCP.STEER_DRIVER_ALLOWANCE:
-            self.driver_torque_ticks += 1
-          else:
+          if CS.out.steeringTorque > 150:  # TIGUAN: was ALLOWANCE(60); natural bend grip is 0.6-1.4 Nm
+            self.driver_torque_ticks += 1  # sustained and reduced assist through whole bends (the jerk).
+          else:                            # 150 matches the holdoff latch: only a real push softens the wheel.
             self.driver_torque_ticks = 0
           effective_torque = CS.out.steeringTorque if self.driver_torque_ticks > 15 else 0.
           target_power_driver = int(np.interp(effective_torque, [self.CCP.STEER_DRIVER_ALLOWANCE, self.CCP.STEER_DRIVER_MAX],

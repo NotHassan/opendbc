@@ -277,7 +277,9 @@ class CarState(CarStateBase, MadsCarState):
       ret.steeringAngleDeg *= 1.1862 # ["LWI_01"]["LWI_Lenkradwinkel"] observed with factor 0.1 instead of 0.0843
     ret.steeringRateDeg  = pt_cp.vl["LWI_01"]["LWI_Lenkradw_Geschw"] * (1, -1)[int(pt_cp.vl["LWI_01"]["LWI_VZ_Lenkradw_Geschw"])]
     ret.steeringTorque   = pt_cp.vl["LH_EPS_03"]["EPS_Lenkmoment"] * (1, -1)[int(pt_cp.vl["LH_EPS_03"]["EPS_VZ_Lenkmoment"])]
-    ret.steeringPressed  = abs(ret.steeringTorque) > self.CCP.STEER_DRIVER_ALLOWANCE
+    # TIGUAN: raw >ALLOWANCE(60) flagged natural bend grip (0.6-1.4 Nm sustained) as override at ~1Hz
+    # (UI override flicker + steerOverride spam). Require a real push (1.5 Nm) sustained ~0.15s.
+    ret.steeringPressed  = self.update_steering_pressed(abs(ret.steeringTorque) > 150, 15)
     ret.steeringSlightlyPressed = abs(ret.steeringTorque) > self.CCP.STEER_DRIVER_SLIGHT_PRESS
     ret.steeringCurvature = -pt_cp.vl["QFK_01"]["Curvature"] * (1, -1)[int(pt_cp.vl["QFK_01"]["Curvature_VZ"])]
     
