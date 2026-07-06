@@ -278,8 +278,16 @@ class CarState(CarStateBase, MadsCarState):
     ret.steeringRateDeg  = pt_cp.vl["LWI_01"]["LWI_Lenkradw_Geschw"] * (1, -1)[int(pt_cp.vl["LWI_01"]["LWI_VZ_Lenkradw_Geschw"])]
     ret.steeringTorque   = pt_cp.vl["LH_EPS_03"]["EPS_Lenkmoment"] * (1, -1)[int(pt_cp.vl["LH_EPS_03"]["EPS_VZ_Lenkmoment"])]
     # TIGUAN: raw >ALLOWANCE(60) flagged natural bend grip (0.6-1.4 Nm sustained) as override at ~1Hz
-    # (UI override flicker + steerOverride spam). Require a real push (1.5 Nm) sustained ~0.15s.
-    ret.steeringPressed  = self.update_steering_pressed(abs(ret.steeringTorque) > 150, 15)
+    # (UI override flicker + steerOverride spam), and rack-recoil transients read >1.5 Nm even hands-off.
+    # Require a real push (1.5 Nm) sustained ~0.15s AND hands actually on the capacitive wheel
+    # (KLR_01 Touchauswertung: 0=no hands, 7=light, 10=firm). Fail-open: if the touch sensor is
+    # absent or errored, fall back to torque-only so override can never become unavailable.
+    if self.CP.flags & VolkswagenFlags.STOCK_KLR_PRESENT:
+      klr = pt_cp.vl["KLR_01"]
+      hands_on = bool(klr["KLR_Fehler"]) or bool(klr["KLR_ResponseError"]) or klr["KLR_Touchauswertung"] >= 7
+    else:
+      hands_on = True
+    ret.steeringPressed  = self.update_steering_pressed(hands_on and abs(ret.steeringTorque) > 150, 15)
     ret.steeringSlightlyPressed = abs(ret.steeringTorque) > self.CCP.STEER_DRIVER_SLIGHT_PRESS
     ret.steeringCurvature = -pt_cp.vl["QFK_01"]["Curvature"] * (1, -1)[int(pt_cp.vl["QFK_01"]["Curvature_VZ"])]
     

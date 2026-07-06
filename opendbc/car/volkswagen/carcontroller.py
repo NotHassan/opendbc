@@ -119,7 +119,7 @@ class CarController(CarControllerBase, IntelligentCruiseButtonManagementInterfac
 
           # TIGUAN: after a sustained manual override (>1.5 Nm for ~0.25 s), hold steering power down for
           # ~0.5 s once the driver releases the wheel, instead of ramping assist back up immediately
-          if abs(CS.out.steeringTorque) > 150:
+          if CS.out.steeringPressed:               # TIGUAN: touch-gated real push (1.5 Nm sustained + hands on)
             self.driver_override_ticks += 1
             if self.driver_override_ticks >= 12:   # ~0.25 s at 50 Hz -> real override, not a bend torque spike
               self.reengage_holdoff_ticks = 25     # ~0.5 s at 50 Hz
@@ -132,9 +132,11 @@ class CarController(CarControllerBase, IntelligentCruiseButtonManagementInterfac
           # TIGUAN: debounce the power reduction — bend self-aligning torque crosses the allowance in
           # ~60ms blips at ~1Hz, and even shallow assist dips visibly disturb tracking (3-7x curvature
           # error). Only treat torque as a driver override once sustained for ~0.3s.
-          if CS.out.steeringTorque > 150:  # TIGUAN: was ALLOWANCE(60); natural bend grip is 0.6-1.4 Nm
-            self.driver_torque_ticks += 1  # sustained and reduced assist through whole bends (the jerk).
-          else:                            # 150 matches the holdoff latch: only a real push softens the wheel.
+          # TIGUAN: gate on steeringPressed (1.5 Nm sustained + capacitive hands-on) so neither natural
+          # bend grip nor hands-off rack-recoil transients reduce assist. Only a real push softens the wheel.
+          if CS.out.steeringPressed:
+            self.driver_torque_ticks += 1
+          else:
             self.driver_torque_ticks = 0
           effective_torque = CS.out.steeringTorque if self.driver_torque_ticks > 15 else 0.
           target_power_driver = int(np.interp(effective_torque, [self.CCP.STEER_DRIVER_ALLOWANCE, self.CCP.STEER_DRIVER_MAX],
