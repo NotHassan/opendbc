@@ -37,6 +37,7 @@ class CarState(CarStateBase, MadsCarState):
     self.hca_status_fluctuation_frames = deque()
     self.hca_status_candidate = None        # TIGUAN: watchdog debounce
     self.hca_status_candidate_frames = 0    # TIGUAN: watchdog debounce
+    self.gear_shifter_last = GearShifter.park  # TIGUAN: gear held through gearbox-ECU boot window
 
   def update_button_enable(self, buttonEvents: list[structs.CarState.ButtonEvent]):
     if not self.CP.pcmCruise:
@@ -303,6 +304,13 @@ class CarState(CarStateBase, MadsCarState):
       ret.gearShifter = self.parse_gear_shifter(self.CCP.shifter_values.get(pt_cp.vl["Gateway_73"]["GE_Fahrstufe"], None)) # (candidate for all plattforms MEB and MQB evo)
     else:
       ret.gearShifter = self.parse_gear_shifter(self.CCP.shifter_values.get(pt_cp.vl["Getriebe_11"]["GE_Fahrstufe"], None))
+    # TIGUAN: the gearbox ECU broadcasts an out-of-map value for ~2s while it boots, which reads as
+    # "unknown" and flashes a gear alert at every car start. Hold the last-known gear (park at boot)
+    # through the init window; after that, unknown passes through honestly.
+    if ret.gearShifter == GearShifter.unknown and self.frame < 1000:
+      ret.gearShifter = self.gear_shifter_last
+    elif ret.gearShifter != GearShifter.unknown:
+      self.gear_shifter_last = ret.gearShifter
     drive_mode = ret.gearShifter == GearShifter.drive
     
     hca_status = self.CCP.hca_status_values.get(pt_cp.vl["QFK_01"]["LatCon_HCA_Status"])
