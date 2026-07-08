@@ -278,23 +278,25 @@ class CarState(CarStateBase, MadsCarState):
       ret.steeringAngleDeg *= 1.1862 # ["LWI_01"]["LWI_Lenkradwinkel"] observed with factor 0.1 instead of 0.0843
     ret.steeringRateDeg  = pt_cp.vl["LWI_01"]["LWI_Lenkradw_Geschw"] * (1, -1)[int(pt_cp.vl["LWI_01"]["LWI_VZ_Lenkradw_Geschw"])]
     ret.steeringTorque   = pt_cp.vl["LH_EPS_03"]["EPS_Lenkmoment"] * (1, -1)[int(pt_cp.vl["LH_EPS_03"]["EPS_VZ_Lenkmoment"])]
-    # TIGUAN: raw >ALLOWANCE(60) flagged natural bend grip (0.6-1.4 Nm sustained) as override at ~1Hz
-    # (UI override flicker + steerOverride spam), and rack-recoil transients read >1.5 Nm even hands-off.
-    # Require a real push (1.5 Nm) sustained ~0.15s AND hands actually on the capacitive wheel
-    # (KLR_01 Touchauswertung: 0=no hands, 7=light, 10=firm). Fail-open: if the touch sensor is
-    # absent or errored, fall back to torque-only so override can never become unavailable.
-    if self.CP.flags & VolkswagenFlags.STOCK_KLR_PRESENT:
-      klr = pt_cp.vl["KLR_01"]
-      klr_ok = not (bool(klr["KLR_Fehler"]) or bool(klr["KLR_ResponseError"]))
-      touch = klr["KLR_Touchauswertung"] >= 7
-      hands_on = touch or not klr_ok
-      # steeringSlightlyPressed doubles as the capacitive hands-on signal (drives MADS hands-on pause);
-      # falls back to light-torque detection if the touch sensor is errored
-      ret.steeringSlightlyPressed = touch if klr_ok else (abs(ret.steeringTorque) > self.CCP.STEER_DRIVER_SLIGHT_PRESS)
+    if self.CP.flags & VolkswagenFlags.TIGUAN_MK3_TUNING:
+      # Tiguan MY2025: raw >ALLOWANCE(60) flags natural bend grip (0.6-1.4 Nm sustained) as override
+      # at ~1Hz (UI flicker + steerOverride spam), and rack-recoil transients read >1.5 Nm even
+      # hands-off. Require a real push (1.5 Nm) sustained ~0.15s AND hands on the capacitive wheel
+      # (KLR_01 Touchauswertung: 0=no hands, 7=light, 10=firm). Fail-open on sensor error/absence.
+      if self.CP.flags & VolkswagenFlags.STOCK_KLR_PRESENT:
+        klr = pt_cp.vl["KLR_01"]
+        klr_ok = not (bool(klr["KLR_Fehler"]) or bool(klr["KLR_ResponseError"]))
+        touch = klr["KLR_Touchauswertung"] >= 7
+        hands_on = touch or not klr_ok
+        # steeringSlightlyPressed doubles as the capacitive hands-on signal (drives MADS hands-on pause)
+        ret.steeringSlightlyPressed = touch if klr_ok else (abs(ret.steeringTorque) > self.CCP.STEER_DRIVER_SLIGHT_PRESS)
+      else:
+        hands_on = True
+        ret.steeringSlightlyPressed = abs(ret.steeringTorque) > self.CCP.STEER_DRIVER_SLIGHT_PRESS
+      ret.steeringPressed  = self.update_steering_pressed(hands_on and abs(ret.steeringTorque) > 150, 15)
     else:
-      hands_on = True
+      ret.steeringPressed  = abs(ret.steeringTorque) > self.CCP.STEER_DRIVER_ALLOWANCE
       ret.steeringSlightlyPressed = abs(ret.steeringTorque) > self.CCP.STEER_DRIVER_SLIGHT_PRESS
-    ret.steeringPressed  = self.update_steering_pressed(hands_on and abs(ret.steeringTorque) > 150, 15)
     ret.steeringCurvature = -pt_cp.vl["QFK_01"]["Curvature"] * (1, -1)[int(pt_cp.vl["QFK_01"]["Curvature_VZ"])]
     
     ret.yawRate = -pt_cp.vl["ESC_50"]["Yaw_Rate"] * (1, -1)[int(pt_cp.vl["ESC_50"]["Yaw_Rate_Sign"])] * CV.DEG_TO_RAD
@@ -307,7 +309,7 @@ class CarState(CarStateBase, MadsCarState):
     # TIGUAN: the gearbox ECU broadcasts an out-of-map value for ~2s while it boots, which reads as
     # "unknown" and flashes a gear alert at every car start. Hold the last-known gear (park at boot)
     # through the init window; after that, unknown passes through honestly.
-    if ret.gearShifter == GearShifter.unknown and self.frame < 1000:
+    if ret.gearShifter == GearShifter.unknown and self.frame < 1000 and (self.CP.flags & VolkswagenFlags.TIGUAN_MK3_TUNING):
       ret.gearShifter = self.gear_shifter_last
     elif ret.gearShifter != GearShifter.unknown:
       self.gear_shifter_last = ret.gearShifter
@@ -531,19 +533,21 @@ class CarState(CarStateBase, MadsCarState):
     # On MY2025+ vehicles the steering command path moves to Automotive Ethernet, where it cannot be intercepted here.
     # Detect the resulting fluctuating HCA status so a user-facing warning can be raised.
     current_frame = self.frame
-    # TIGUAN: debounce the watchdog input. This car's lateral stack blinks active->ready for a
-    # single 20ms frame at exactly 1Hz while HCA is engaged (Ethernet-side heartbeat, verified to
-    # have no effect on tracking). Only count a status change once the new status has persisted
-    # ~40ms, so the benign heartbeat is ignored while real dropouts still register.
-    if hca_status != self.hca_status_candidate:
-      self.hca_status_candidate = hca_status
-      self.hca_status_candidate_frames = 0
+    if self.CP.flags & VolkswagenFlags.TIGUAN_MK3_TUNING:
+      # Tiguan MY2025: the lateral stack blinks active->ready for a single 20ms frame at exactly
+      # 1Hz while HCA is engaged (Ethernet-side heartbeat, verified to have no tracking effect).
+      # Only count a status change once the new status has persisted ~40ms.
+      if hca_status != self.hca_status_candidate:
+        self.hca_status_candidate = hca_status
+        self.hca_status_candidate_frames = 0
+      else:
+        self.hca_status_candidate_frames += 1
+      effective = self.hca_status_candidate if self.hca_status_candidate_frames >= 4 else self.hca_status_last
     else:
-      self.hca_status_candidate_frames += 1
-    debounced = self.hca_status_candidate if self.hca_status_candidate_frames >= 4 else self.hca_status_last
-    if self.hca_status_last is not None and debounced is not None and debounced != self.hca_status_last:
+      effective = hca_status
+    if self.hca_status_last is not None and effective is not None and effective != self.hca_status_last:
       self.hca_status_fluctuation_frames.append(current_frame)
-    self.hca_status_last = debounced
+    self.hca_status_last = effective
     while self.hca_status_fluctuation_frames and current_frame - self.hca_status_fluctuation_frames[0] >= self.CCP.HCA_STATUS_WATCHDOG_WINDOW_FRAMES:
       self.hca_status_fluctuation_frames.popleft()
 

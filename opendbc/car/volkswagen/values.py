@@ -57,7 +57,7 @@ class CarControllerParams:
   AEB_CONTROL_STEP = 2                     # ACC_10 frequency 50Hz
   AEB_HUD_STEP = 20                        # ACC_15 frequency 5Hz
   HCA_STATUS_WATCHDOG_WINDOW_FRAMES = round(5.0 / DT_CTRL)
-  HCA_STATUS_WATCHDOG_ALLOWED_FLUCTUATIONS_PER_SECOND = 3.0  # TIGUAN: raised 2.0->3.0; benign 1Hz heartbeat = 2.0/s sat exactly on the old threshold
+  HCA_STATUS_WATCHDOG_ALLOWED_FLUCTUATIONS_PER_SECOND = 2.0
 
   # Documented lateral limits: 3.00 Nm max, rate of change 5.00 Nm/sec.
   # MQB vs PQ maximums are shared, but rate-of-change limited differently
@@ -111,13 +111,15 @@ class CarControllerParams:
       self.AEB_HUD_STEP            = 20    # MEB_AWV_01 message frequency 5Hz
       self.LDW_STEP                = 10    # LDW_02 message frequency 10Hz
       self.ACC_HUD_STEP            = 6     # MEB_ACC_01 message frequency 16Hz
+      # Tiguan MY2025: benign Ethernet-side 1Hz heartbeat = 2.0 changes/s, exactly on the stock threshold
+      allowed_fluctuations = 3.0 if CP.flags & VolkswagenFlags.TIGUAN_MK3_TUNING else self.HCA_STATUS_WATCHDOG_ALLOWED_FLUCTUATIONS_PER_SECOND
       self.HCA_STATUS_WATCHDOG_MAX_FLUCTUATION_FRAMES = round(self.HCA_STATUS_WATCHDOG_WINDOW_FRAMES *
-                                                               DT_CTRL * self.HCA_STATUS_WATCHDOG_ALLOWED_FLUCTUATIONS_PER_SECOND)
+                                                               DT_CTRL * allowed_fluctuations)
       self.STEER_DRIVER_ALLOWANCE  = 60    # Driver torque 0.6 Nm, begin steering reduction from MAX
       self.STEER_DRIVER_SLIGHT_PRESS = 15  # Driver torque 0.15 Nm for slight steering override detection
       self.STEER_DRIVER_MAX        = 300   # Driver torque 3.0 Nm, stop steering reduction at MIN
       self.STEERING_POWER_MAX      = 50    # HCA_03 maximum steering power, percentage
-      self.STEERING_POWER_MIN      = 18    # HCA_03 minimum steering power, percentage  # TIGUAN: raised 4->18 to reduce on-bend jerk (was 4)
+      self.STEERING_POWER_MIN      = 18 if CP.flags & VolkswagenFlags.TIGUAN_MK3_TUNING else 4  # HCA_03 minimum steering power, percentage (Tiguan: 18 reduces on-bend jerk)
       self.STEERING_POWER_STEP     = 2     # HCA_03 steering power counter steps
       
       self.CURVATURE_LIMITS: CurvatureSteeringLimits = CurvatureSteeringLimits(
@@ -264,6 +266,7 @@ class VolkswagenFlags(IntFlag):
   MQB_EVO_GEN2 = 2 ** 13
   MLB          = 2 ** 3
   FORD_CAR     = 2 ** 17
+  TIGUAN_MK3_TUNING = 2 ** 18  # MY2025 NA Tiguan rack tuning (power floor, override thresholds, authority caps)
 
 
 @dataclass
@@ -602,7 +605,7 @@ class CAR(Platforms):
     VolkswagenCarSpecs(mass=1787, wheelbase=2.79),
     chassis_codes=set(),
     wmis=set(),
-    flags=VolkswagenFlags.MQB_EVO_GEN2 | VolkswagenFlags.CLUSTER_NO_TA_LANES,
+    flags=VolkswagenFlags.MQB_EVO_GEN2 | VolkswagenFlags.CLUSTER_NO_TA_LANES | VolkswagenFlags.TIGUAN_MK3_TUNING,
   )
   AUDI_Q2_MK1 = VolkswagenMQBPlatformConfig(
     [VWCarDocs("Audi Q2 2018")],

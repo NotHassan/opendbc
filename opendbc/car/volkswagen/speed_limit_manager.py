@@ -23,6 +23,10 @@ PSD_UNIT_MPH = 1
 
 class SpeedLimitManager:
   def __init__(self, car_params, speed_limit_max_kph=SPEED_SUGGESTED_MAX_HIGHWAY_GER_KPH, predicative=False, predicative_speed_limit=False, predicative_curve=False):
+    # Tiguan MY2025: curve speeds sized to the rack's authority (hard-faults ~2.5 m/s^2, command
+    # cap 2.2) instead of ISO comfort -- slowing before the curve keeps lateral from saturating
+    from opendbc.car.volkswagen.values import VolkswagenFlags
+    self.curve_lateral_accel = 2.2 if (car_params.flags & VolkswagenFlags.TIGUAN_MK3_TUNING) else ISO_LATERAL_ACCEL
     self.CP = car_params
     self.v_limit_psd = NOT_SET
     self.v_limit_psd_next = NOT_SET
@@ -183,16 +187,11 @@ class SpeedLimitManager:
       
     return curvature
     
-  # TIGUAN: curve speeds sized to the rack's actual authority, not ISO comfort (3.0 m/s^2).
-  # This Gen2 rack hard-faults near 2.5 m/s^2 and our steering command cap is 2.2 -- slowing to
-  # 2.2 before the curve means lateral control never runs out of authority inside it.
-  CURVE_LATERAL_ACCEL = 2.2  # m/s^2
-
   def _calculate_curve_speed(self, curvature):
     if curvature == NOT_SET:
       return NOT_SET
       
-    curv_speed_ms = math.sqrt(self.CURVE_LATERAL_ACCEL / abs(curvature))
+    curv_speed_ms = math.sqrt(self.curve_lateral_accel / abs(curvature))
 
     if self.v_limit_speed_unit_psd == PSD_UNIT_MPH:
       curv_speed = int((curv_speed_ms * CV.MS_TO_MPH) // 5 * 5) * CV.MPH_TO_KPH

@@ -58,6 +58,7 @@ class CarController(CarControllerBase, IntelligentCruiseButtonManagementInterfac
     self.apply_torque_last = 0
     self.apply_curvature_last = 0.
     self.steering_power_last = 0
+    self.tiguan_tuning = bool(CP.flags & VolkswagenFlags.TIGUAN_MK3_TUNING)
     self.driver_override_ticks = 0    # TIGUAN: re-engage holdoff after manual override
     self.reengage_holdoff_ticks = 0   # TIGUAN: re-engage holdoff after manual override
     self.driver_torque_ticks = 0      # TIGUAN: debounce for driver-torque power reduction
@@ -104,41 +105,46 @@ class CarController(CarControllerBase, IntelligentCruiseButtonManagementInterfac
           apply_curvature = apply_std_curvature_limits(apply_curvature, self.apply_curvature_last, CS.out.vEgoRaw, CS.out.steeringCurvature,
                                                        CS.out.steeringPressed, self.CCP.STEER_STEP, CC.latActive, self.CCP.CURVATURE_LIMITS)
 
-          # TIGUAN: the Gen2 rack hard-faults (QFK status 6, latching until ignition cycle) when HCA
-          # requests beyond its authority envelope. Observed onsets: ~101 deg on a small roundabout
-          # (angle limit at low speed) and 2.6 m/s^2 lat accel at 14 m/s on an on-ramp (lat-accel
-          # limit at road speed; healthy driving p99 was 2.43). Back off before both limits.
-          if abs(CS.out.steeringAngleDeg) > 85:
-            authority_lim = abs(CS.out.steeringCurvature)
-            apply_curvature = float(np.clip(apply_curvature, -authority_lim, authority_lim))
-          lat_accel_lim = 2.2 / max(CS.out.vEgo ** 2, 1.0)
-          apply_curvature = float(np.clip(apply_curvature, -lat_accel_lim, lat_accel_lim))
+          if self.tiguan_tuning:
+            # The MY2025 Gen2 rack hard-faults (QFK status 6, latching until ignition cycle) when HCA
+            # requests beyond its authority envelope. Observed onsets: ~101 deg on a small roundabout
+            # (angle limit at low speed) and 2.6 m/s^2 lat accel at 14 m/s on an on-ramp (lat-accel
+            # limit at road speed; healthy driving p99 was 2.43). Back off before both limits.
+            if abs(CS.out.steeringAngleDeg) > 85:
+              authority_lim = abs(CS.out.steeringCurvature)
+              apply_curvature = float(np.clip(apply_curvature, -authority_lim, authority_lim))
+            lat_accel_lim = 2.2 / max(CS.out.vEgo ** 2, 1.0)
+            apply_curvature = float(np.clip(apply_curvature, -lat_accel_lim, lat_accel_lim))
 
           min_power = max(self.steering_power_last - self.CCP.STEERING_POWER_STEP, self.CCP.STEERING_POWER_MIN)
           max_power = min(self.steering_power_last + self.CCP.STEERING_POWER_STEP, self.CCP.STEERING_POWER_MAX)
 
           # TIGUAN: after a sustained manual override (>1.5 Nm for ~0.25 s), hold steering power down for
           # ~0.5 s once the driver releases the wheel, instead of ramping assist back up immediately
-          if CS.out.steeringPressed:               # TIGUAN: touch-gated real push (1.5 Nm sustained + hands on)
-            self.driver_override_ticks += 1
-            if self.driver_override_ticks >= 12:   # ~0.25 s at 50 Hz -> real override, not a bend torque spike
-              self.reengage_holdoff_ticks = 25     # ~0.5 s at 50 Hz
-          else:
-            self.driver_override_ticks = 0
-          if abs(CS.out.steeringTorque) < self.CCP.STEER_DRIVER_ALLOWANCE and self.reengage_holdoff_ticks > 0:
-            self.reengage_holdoff_ticks -= 1
-            max_power = min(self.steering_power_last, max_power)
+          if self.tiguan_tuning:
+            if CS.out.steeringPressed:               # touch-gated real push (1.5 Nm sustained + hands on)
+              self.driver_override_ticks += 1
+              if self.driver_override_ticks >= 12:   # ~0.25 s at 50 Hz -> real override, not a bend torque spike
+                self.reengage_holdoff_ticks = 25     # ~0.5 s at 50 Hz
+            else:
+              self.driver_override_ticks = 0
+            if abs(CS.out.steeringTorque) < self.CCP.STEER_DRIVER_ALLOWANCE and self.reengage_holdoff_ticks > 0:
+              self.reengage_holdoff_ticks -= 1
+              max_power = min(self.steering_power_last, max_power)
 
           # TIGUAN: debounce the power reduction — bend self-aligning torque crosses the allowance in
           # ~60ms blips at ~1Hz, and even shallow assist dips visibly disturb tracking (3-7x curvature
           # error). Only treat torque as a driver override once sustained for ~0.3s.
-          # TIGUAN: gate on steeringPressed (1.5 Nm sustained + capacitive hands-on) so neither natural
-          # bend grip nor hands-off rack-recoil transients reduce assist. Only a real push softens the wheel.
-          if CS.out.steeringPressed:
-            self.driver_torque_ticks += 1
+          if self.tiguan_tuning:
+            # gate on steeringPressed (1.5 Nm sustained + capacitive hands-on) so neither natural
+            # bend grip nor hands-off rack-recoil transients reduce assist; only a real push softens
+            if CS.out.steeringPressed:
+              self.driver_torque_ticks += 1
+            else:
+              self.driver_torque_ticks = 0
+            effective_torque = CS.out.steeringTorque if self.driver_torque_ticks > 15 else 0.
           else:
-            self.driver_torque_ticks = 0
-          effective_torque = CS.out.steeringTorque if self.driver_torque_ticks > 15 else 0.
+            effective_torque = CS.out.steeringTorque
           target_power_driver = int(np.interp(effective_torque, [self.CCP.STEER_DRIVER_ALLOWANCE, self.CCP.STEER_DRIVER_MAX],
                                                                 [self.CCP.STEERING_POWER_MAX, self.CCP.STEERING_POWER_MIN]))
           target_power = int(np.interp(CS.out.vEgo, [0., 0.5], [self.CCP.STEERING_POWER_MIN, target_power_driver]))
