@@ -197,7 +197,9 @@ class CarController(CarControllerBase, IntelligentCruiseButtonManagementInterfac
         # Pacify VW Emergency Assist driver inactivity detection by changing its view of driver steering input torque
         # to the greatest of actual driver input or 2x openpilot's output (1x openpilot output is not enough to
         # consistently reset inactivity detection on straight level roads). See commaai/openpilot#23274 for background.
-        ea_simulated_torque = float(np.clip(apply_torque * 2, -self.CCP.STEER_MAX, self.CCP.STEER_MAX))
+        # apply_torque_last: the local apply_torque only exists on STEER_STEP frames, but this
+        # block runs every frame (was an UnboundLocalError on non-steering frames)
+        ea_simulated_torque = float(np.clip(self.apply_torque_last * 2, -self.CCP.STEER_MAX, self.CCP.STEER_MAX))
         if abs(CS.out.steeringTorque) > abs(ea_simulated_torque):
           ea_simulated_torque = CS.out.steeringTorque
         can_sends.append(self.CCS.create_eps_update(self.packer_pt, self.CAN.cam, CS.eps_stock_values, ea_simulated_torque))
@@ -345,7 +347,7 @@ class CarController(CarControllerBase, IntelligentCruiseButtonManagementInterfac
 
     gra_send_ready = CS.gra_stock_values["COUNTER"] != self.gra_acc_counter_last
     if gra_send_ready:
-      bus_send = self.CAN.main if self.CP.flags & VolkswagenFlags.PQ else self.CAN.ext
+      bus_send = self.CAN.pt if self.CP.flags & VolkswagenFlags.PQ else self.CAN.ext  # CanBus has no 'main'; PQ buttons ride the powertrain bus
       if self.CP.pcmCruise:
         if CC.cruiseControl.cancel or CC.cruiseControl.resume:
           can_sends.append(self.CCS.create_acc_buttons_control(self.packer_pt, bus_send, CS.gra_stock_values,
