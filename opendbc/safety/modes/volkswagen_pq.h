@@ -99,12 +99,13 @@ static void volkswagen_pq_rx_hook(const CANPacket_t *msg) {
       // ACC main switch on is a prerequisite to enter controls, exit controls immediately on main switch off
       // Signal: Motor_5.MO5_GRA_Hauptsch
       acc_main_on = GET_BIT(msg, 50U);
+      // check on the Motor_5 message itself (not every RX) so unrelated messages don't clear controls
+      if (volkswagen_longitudinal && !acc_main_on) {
+        controls_allowed = false;
+      }
     }
     
     if (volkswagen_longitudinal) {
-      if (!acc_main_on) {
-        controls_allowed = false;
-      }
       
       if (msg->addr == MSG_GRA_NEU) {
         // If ACC main switch is on, enter controls on falling edge of Set or Resume

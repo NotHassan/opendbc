@@ -57,7 +57,10 @@ class TestVolkswagenMebSafetyBase(common.CarSafetyTest, common.CurvatureSteering
 
   # Driver throttle input
   def _user_gas_msg(self, gas):
-    values = {"Accel_Pedal_Pressure": gas}
+    # Motor_51 carries BOTH the accel pedal and the TSK/ACC state; leaving TSK_Status at 0 reads
+    # as "main switch off" and legitimately drops controls. Gas-override scenarios have the stock
+    # ACC engaged-with-override state (4).
+    values = {"Accel_Pedal_Pressure": gas, "TSK_Status": 4}
     return self.packer.make_can_msg_safety("Motor_51", 0, values)
 
   def _vehicle_moving_msg(self, speed_mps: float):

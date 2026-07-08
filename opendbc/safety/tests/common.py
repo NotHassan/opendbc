@@ -1087,7 +1087,7 @@ class SafetyTest(SafetyTestBase):
                           'TestHyundaiLongitudinalESCCSafety'}
             if any(attr.startswith(test) for test in base_tests) and any(current_test.startswith(test) for test in base_tests):
               continue
-            volkswagen_shared = ('TestVolkswagenMqb', 'TestVolkswagenMlb')
+            volkswagen_shared = ('TestVolkswagenMqb', 'TestVolkswagenMlb', 'TestVolkswagenMeb')  # VW modes share LDW/HCA/GRA addresses by design
             if attr.startswith(volkswagen_shared) and current_test.startswith(volkswagen_shared):
               continue
 
