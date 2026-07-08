@@ -183,11 +183,16 @@ class SpeedLimitManager:
       
     return curvature
     
+  # TIGUAN: curve speeds sized to the rack's actual authority, not ISO comfort (3.0 m/s^2).
+  # This Gen2 rack hard-faults near 2.5 m/s^2 and our steering command cap is 2.2 -- slowing to
+  # 2.2 before the curve means lateral control never runs out of authority inside it.
+  CURVE_LATERAL_ACCEL = 2.2  # m/s^2
+
   def _calculate_curve_speed(self, curvature):
     if curvature == NOT_SET:
       return NOT_SET
       
-    curv_speed_ms = math.sqrt(ISO_LATERAL_ACCEL / abs(curvature))
+    curv_speed_ms = math.sqrt(self.CURVE_LATERAL_ACCEL / abs(curvature))
 
     if self.v_limit_speed_unit_psd == PSD_UNIT_MPH:
       curv_speed = int((curv_speed_ms * CV.MS_TO_MPH) // 5 * 5) * CV.MPH_TO_KPH
