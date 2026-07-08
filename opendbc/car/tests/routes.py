@@ -25,6 +25,7 @@ non_tested_cars = [
   GM.CHEVROLET_MALIBU,
   HYUNDAI.GENESIS_G90,
   VOLKSWAGEN.VOLKSWAGEN_CRAFTER_MK2,  # need a route from an ACC-equipped Crafter
+  VOLKSWAGEN.VOLKSWAGEN_TIGUAN_MK3,  # community port (MY2025 NA, lateral only); no CI route uploaded yet
   SUBARU.SUBARU_FORESTER_HYBRID,
   VOLKSWAGEN.PORSCHE_MACAN_MK1,
   HONDA.ACURA_TLX_2G,

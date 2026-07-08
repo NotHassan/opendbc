@@ -35,6 +35,9 @@ class CarState(CarStateBase, MadsCarState):
     self.hca_status_last = None
     self.hca_status_fluct_counter = 0
     self.hca_status_fluctuation_frames = deque()
+    self.hca_status_candidate = None        # TIGUAN: watchdog debounce
+    self.hca_status_candidate_frames = 0    # TIGUAN: watchdog debounce
+    self.gear_shifter_last = GearShifter.park  # TIGUAN: gear held through gearbox-ECU boot window
 
   def update_button_enable(self, buttonEvents: list[structs.CarState.ButtonEvent]):
     if not self.CP.pcmCruise:
@@ -275,8 +278,24 @@ class CarState(CarStateBase, MadsCarState):
       ret.steeringAngleDeg *= 1.1862 # ["LWI_01"]["LWI_Lenkradwinkel"] observed with factor 0.1 instead of 0.0843
     ret.steeringRateDeg  = pt_cp.vl["LWI_01"]["LWI_Lenkradw_Geschw"] * (1, -1)[int(pt_cp.vl["LWI_01"]["LWI_VZ_Lenkradw_Geschw"])]
     ret.steeringTorque   = pt_cp.vl["LH_EPS_03"]["EPS_Lenkmoment"] * (1, -1)[int(pt_cp.vl["LH_EPS_03"]["EPS_VZ_Lenkmoment"])]
-    ret.steeringPressed  = abs(ret.steeringTorque) > self.CCP.STEER_DRIVER_ALLOWANCE
-    ret.steeringSlightlyPressed = abs(ret.steeringTorque) > self.CCP.STEER_DRIVER_SLIGHT_PRESS
+    if self.CP.carFingerprint == "VOLKSWAGEN_TIGUAN_MK3":
+      # This rack's torsion bar reads bend grip (0.6-1.4 Nm sustained) and even hands-off recoil
+      # transients (>1.5 Nm) as driver torque -> stock 0.6 Nm raw detection flags override at ~1Hz.
+      # Require a real push (1.5 Nm sustained ~0.15s) AND hands on the capacitive wheel
+      # (KLR_01 Touchauswertung: 0=no hands, 7=light, 10=firm). Fail-open on sensor error.
+      if self.CP.flags & VolkswagenFlags.STOCK_KLR_PRESENT:
+        klr = pt_cp.vl["KLR_01"]
+        klr_ok = not (bool(klr["KLR_Fehler"]) or bool(klr["KLR_ResponseError"]))
+        touch = klr["KLR_Touchauswertung"] >= 7
+        hands_on = touch or not klr_ok
+        ret.steeringSlightlyPressed = touch if klr_ok else (abs(ret.steeringTorque) > self.CCP.STEER_DRIVER_SLIGHT_PRESS)
+      else:
+        hands_on = True
+        ret.steeringSlightlyPressed = abs(ret.steeringTorque) > self.CCP.STEER_DRIVER_SLIGHT_PRESS
+      ret.steeringPressed  = self.update_steering_pressed(hands_on and abs(ret.steeringTorque) > 150, 15)
+    else:
+      ret.steeringPressed  = abs(ret.steeringTorque) > self.CCP.STEER_DRIVER_ALLOWANCE
+      ret.steeringSlightlyPressed = abs(ret.steeringTorque) > self.CCP.STEER_DRIVER_SLIGHT_PRESS
     ret.steeringCurvature = -pt_cp.vl["QFK_01"]["Curvature"] * (1, -1)[int(pt_cp.vl["QFK_01"]["Curvature_VZ"])]
     
     ret.yawRate = -pt_cp.vl["ESC_50"]["Yaw_Rate"] * (1, -1)[int(pt_cp.vl["ESC_50"]["Yaw_Rate_Sign"])] * CV.DEG_TO_RAD
@@ -286,6 +305,13 @@ class CarState(CarStateBase, MadsCarState):
       ret.gearShifter = self.parse_gear_shifter(self.CCP.shifter_values.get(pt_cp.vl["Gateway_73"]["GE_Fahrstufe"], None)) # (candidate for all plattforms MEB and MQB evo)
     else:
       ret.gearShifter = self.parse_gear_shifter(self.CCP.shifter_values.get(pt_cp.vl["Getriebe_11"]["GE_Fahrstufe"], None))
+    # TIGUAN: the gearbox ECU broadcasts an out-of-map value for ~2s while it boots, which reads as
+    # "unknown" and flashes a gear alert at every car start. Hold the last-known gear (park at boot)
+    # through the init window; after that, unknown passes through honestly.
+    if ret.gearShifter == GearShifter.unknown and self.frame < 1000 and self.CP.carFingerprint == "VOLKSWAGEN_TIGUAN_MK3":
+      ret.gearShifter = self.gear_shifter_last
+    elif ret.gearShifter != GearShifter.unknown:
+      self.gear_shifter_last = ret.gearShifter
     drive_mode = ret.gearShifter == GearShifter.drive
     
     hca_status = self.CCP.hca_status_values.get(pt_cp.vl["QFK_01"]["LatCon_HCA_Status"])
@@ -297,7 +323,7 @@ class CarState(CarStateBase, MadsCarState):
     # VW Emergency Assist status tracking and mitigation
     self.eps_stock_values = pt_cp.vl["LH_EPS_03"]
     self.klr_stock_values = pt_cp.vl["KLR_01"] if self.CP.flags & VolkswagenFlags.STOCK_KLR_PRESENT else {}
-    ret.carFaultedNonCritical = cam_cp.vl["EA_01"]["EA_Funktionsstatus"] in (3, 4, 5, 6) # emergency assist always present also if not coded
+    ret.carFaultedNonCritical = (cam_cp.vl["EA_01"]["EA_Funktionsstatus"] in (3, 4, 5, 6)) if (self.CP.flags & VolkswagenFlags.STOCK_EA_PRESENT) else False  # FIX: EA_01 not on all cars
 
     # Update gas, brakes, and gearshift.
     #ret.gasPressed   = pt_cp.vl["Motor_54"]["Accelerator_Pressure"] > 0 # MQBevo offset is not reliable (fluctuation or different statically in small range)
@@ -506,9 +532,21 @@ class CarState(CarStateBase, MadsCarState):
     # On MY2025+ vehicles the steering command path moves to Automotive Ethernet, where it cannot be intercepted here.
     # Detect the resulting fluctuating HCA status so a user-facing warning can be raised.
     current_frame = self.frame
-    if self.hca_status_last is not None and hca_status is not None and hca_status != self.hca_status_last:
+    # 2025+ NA Tiguan: the lateral stack blinks active->ready for a single 20ms frame at exactly
+    # 1Hz while HCA is engaged (Ethernet-side heartbeat, verified no tracking effect). Only count
+    # a status change once persisted ~40ms so the heartbeat is ignored; real dropouts still register.
+    if self.CP.carFingerprint == "VOLKSWAGEN_TIGUAN_MK3":
+      if hca_status != self.hca_status_candidate:
+        self.hca_status_candidate = hca_status
+        self.hca_status_candidate_frames = 0
+      else:
+        self.hca_status_candidate_frames += 1
+      debounced = self.hca_status_candidate if self.hca_status_candidate_frames >= 4 else self.hca_status_last
+    else:
+      debounced = hca_status
+    if self.hca_status_last is not None and debounced is not None and debounced != self.hca_status_last:
       self.hca_status_fluctuation_frames.append(current_frame)
-    self.hca_status_last = hca_status
+    self.hca_status_last = debounced
     while self.hca_status_fluctuation_frames and current_frame - self.hca_status_fluctuation_frames[0] >= self.CCP.HCA_STATUS_WATCHDOG_WINDOW_FRAMES:
       self.hca_status_fluctuation_frames.popleft()
 

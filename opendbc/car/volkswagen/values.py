@@ -111,14 +111,23 @@ class CarControllerParams:
       self.AEB_HUD_STEP            = 20    # MEB_AWV_01 message frequency 5Hz
       self.LDW_STEP                = 10    # LDW_02 message frequency 10Hz
       self.ACC_HUD_STEP            = 6     # MEB_ACC_01 message frequency 16Hz
+      # 2025+ NA Tiguan: the lateral stack blinks active->ready at exactly 1Hz while HCA is engaged
+      # (benign Ethernet-side heartbeat, verified no tracking effect) = 2.0 changes/s, exactly the
+      # stock threshold -> constant false steerFaultWarning. Allow 3.0/s on this platform.
+      allowed_fluctuations = 3.0 if CP.carFingerprint == "VOLKSWAGEN_TIGUAN_MK3" else self.HCA_STATUS_WATCHDOG_ALLOWED_FLUCTUATIONS_PER_SECOND
       self.HCA_STATUS_WATCHDOG_MAX_FLUCTUATION_FRAMES = round(self.HCA_STATUS_WATCHDOG_WINDOW_FRAMES *
-                                                               DT_CTRL * self.HCA_STATUS_WATCHDOG_ALLOWED_FLUCTUATIONS_PER_SECOND)
+                                                               DT_CTRL * allowed_fluctuations)
       self.STEER_DRIVER_ALLOWANCE  = 60    # Driver torque 0.6 Nm, begin steering reduction from MAX
       self.STEER_DRIVER_SLIGHT_PRESS = 15  # Driver torque 0.15 Nm for slight steering override detection
       self.STEER_DRIVER_MAX        = 300   # Driver torque 3.0 Nm, stop steering reduction at MIN
       self.STEERING_POWER_MAX      = 50    # HCA_03 maximum steering power, percentage
       self.STEERING_POWER_MIN      = 4     # HCA_03 minimum steering power, percentage
       self.STEERING_POWER_STEP     = 2     # HCA_03 steering power counter steps
+      if CP.carFingerprint == "VOLKSWAGEN_TIGUAN_MK3":
+        # bend self-aligning torque cycles this rack's driver-torque power reduction at ~1Hz and
+        # even brief shallow assist dips visibly disturb tracking (felt as jerky steering); a
+        # higher floor keeps the remaining dips imperceptible
+        self.STEERING_POWER_MIN = 18
       
       self.CURVATURE_LIMITS: CurvatureSteeringLimits = CurvatureSteeringLimits(
         0.195,  # Max curvature for steering command, m^-1
@@ -595,6 +604,13 @@ class CAR(Platforms):
     chassis_codes={"GY"},
     wmis={WMI.AUDI_EUROPE_MPV},
     #model_years={"T"},
+    flags=VolkswagenFlags.MQB_EVO_GEN2 | VolkswagenFlags.CLUSTER_NO_TA_LANES,
+  )
+  VOLKSWAGEN_TIGUAN_MK3 = VolkswagenMQBevoPlatformConfig(
+    [VWCarDocs("Volkswagen Tiguan 2025-26")],
+    VolkswagenCarSpecs(mass=1787, wheelbase=2.79),
+    chassis_codes=set(),
+    wmis=set(),
     flags=VolkswagenFlags.MQB_EVO_GEN2 | VolkswagenFlags.CLUSTER_NO_TA_LANES,
   )
   AUDI_Q2_MK1 = VolkswagenMQBPlatformConfig(

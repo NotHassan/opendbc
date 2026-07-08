@@ -58,6 +58,10 @@ class CarController(CarControllerBase, IntelligentCruiseButtonManagementInterfac
     self.apply_torque_last = 0
     self.apply_curvature_last = 0.
     self.steering_power_last = 0
+    self.is_tiguan_mk3 = CP.carFingerprint == "VOLKSWAGEN_TIGUAN_MK3"
+    self.driver_override_ticks = 0    # Tiguan Mk3: re-engage holdoff after manual override
+    self.reengage_holdoff_ticks = 0   # Tiguan Mk3: re-engage holdoff after manual override
+    self.driver_torque_ticks = 0      # Tiguan Mk3: debounce for driver-torque power reduction
     self.accel_last = 0.
     self.long_jerk_control = LongControlJerk(dt=(DT_CTRL * self.CCP.ACC_CONTROL_STEP)) if self.CP.flags & (VolkswagenFlags.MEB | VolkswagenFlags.MQB_EVO) else None
     self.long_limit_control = LongControlLimit(dt=(DT_CTRL * self.CCP.ACC_CONTROL_STEP)) if self.CP.flags & (VolkswagenFlags.MEB | VolkswagenFlags.MQB_EVO) else None
@@ -101,14 +105,58 @@ class CarController(CarControllerBase, IntelligentCruiseButtonManagementInterfac
           apply_curvature = apply_std_curvature_limits(apply_curvature, self.apply_curvature_last, CS.out.vEgoRaw, CS.out.steeringCurvature,
                                                        CS.out.steeringPressed, self.CCP.STEER_STEP, CC.latActive, self.CCP.CURVATURE_LIMITS)
 
+          # 2025+ NA Tiguan: the rack hard-faults (QFK status 6, LATCHING until ignition cycle) when
+          # HCA requests beyond its authority envelope. Observed onsets on real drives: ~101 deg on a
+          # small roundabout (angle limit at low speed) and 2.6 m/s^2 lateral accel on an on-ramp
+          # (lat-accel limit at road speed). Back off before both limits.
+          if self.is_tiguan_mk3:
+            if abs(CS.out.steeringAngleDeg) > 85:
+              authority_lim = abs(CS.out.steeringCurvature)
+              apply_curvature = float(np.clip(apply_curvature, -authority_lim, authority_lim))
+            lat_accel_lim = 2.2 / max(CS.out.vEgo ** 2, 1.0)
+            apply_curvature = float(np.clip(apply_curvature, -lat_accel_lim, lat_accel_lim))
+
           min_power = max(self.steering_power_last - self.CCP.STEERING_POWER_STEP, self.CCP.STEERING_POWER_MIN)
           max_power = min(self.steering_power_last + self.CCP.STEERING_POWER_STEP, self.CCP.STEERING_POWER_MAX)
-          target_power_driver = int(np.interp(CS.out.steeringTorque, [self.CCP.STEER_DRIVER_ALLOWANCE, self.CCP.STEER_DRIVER_MAX],
-                                                                     [self.CCP.STEERING_POWER_MAX, self.CCP.STEERING_POWER_MIN]))
+
+          # TIGUAN: after a sustained manual override (>1.5 Nm for ~0.25 s), hold steering power down for
+          # ~0.5 s once the driver releases the wheel, instead of ramping assist back up immediately
+          if self.is_tiguan_mk3:
+            # after a real override (steeringPressed = touch-gated 1.5 Nm sustained), hold power
+            # down ~0.5s once released instead of ramping assist back up immediately
+            if CS.out.steeringPressed:
+              self.driver_override_ticks += 1
+              if self.driver_override_ticks >= 12:   # ~0.25 s at 50 Hz -> real override, not a bend torque spike
+                self.reengage_holdoff_ticks = 25     # ~0.5 s at 50 Hz
+            else:
+              self.driver_override_ticks = 0
+            if abs(CS.out.steeringTorque) < self.CCP.STEER_DRIVER_ALLOWANCE and self.reengage_holdoff_ticks > 0:
+              self.reengage_holdoff_ticks -= 1
+              max_power = min(self.steering_power_last, max_power)
+
+          # TIGUAN: debounce the power reduction — bend self-aligning torque crosses the allowance in
+          # ~60ms blips at ~1Hz, and even shallow assist dips visibly disturb tracking (3-7x curvature
+          # error). Only treat torque as a driver override once sustained for ~0.3s.
+          if self.is_tiguan_mk3:
+            # gate assist reduction on steeringPressed (1.5 Nm sustained + capacitive hands-on) so
+            # neither natural bend grip nor hands-off rack-recoil transients soften the wheel; the
+            # ~1Hz reduce/recover cycle they cause is felt as jerky steering on bends
+            if CS.out.steeringPressed:
+              self.driver_torque_ticks += 1
+            else:
+              self.driver_torque_ticks = 0
+            effective_torque = CS.out.steeringTorque if self.driver_torque_ticks > 15 else 0.
+          else:
+            effective_torque = CS.out.steeringTorque
+          target_power_driver = int(np.interp(effective_torque, [self.CCP.STEER_DRIVER_ALLOWANCE, self.CCP.STEER_DRIVER_MAX],
+                                                                [self.CCP.STEERING_POWER_MAX, self.CCP.STEERING_POWER_MIN]))
           target_power = int(np.interp(CS.out.vEgo, [0., 0.5], [self.CCP.STEERING_POWER_MIN, target_power_driver]))
           steering_power = min(max(target_power, min_power), max_power)
           
         else:
+          self.driver_override_ticks = 0   # Tiguan Mk3: holdoff reset
+          self.reengage_holdoff_ticks = 0  # Tiguan Mk3: holdoff reset
+          self.driver_torque_ticks = 0     # Tiguan Mk3: debounce reset
           if self.steering_power_last > 0: # keep HCA alive until steering power has reduced to zero
             hca_enabled = True
             apply_curvature = np.clip(CS.out.steeringCurvature, -self.CCP.CURVATURE_LIMITS.CURVATURE_MAX, self.CCP.CURVATURE_LIMITS.CURVATURE_MAX) # synchronize with current curvature
@@ -158,7 +206,9 @@ class CarController(CarControllerBase, IntelligentCruiseButtonManagementInterfac
         # Pacify VW Emergency Assist driver inactivity detection by changing its view of driver steering input torque
         # to the greatest of actual driver input or 2x openpilot's output (1x openpilot output is not enough to
         # consistently reset inactivity detection on straight level roads). See commaai/openpilot#23274 for background.
-        ea_simulated_torque = float(np.clip(apply_torque * 2, -self.CCP.STEER_MAX, self.CCP.STEER_MAX))
+        # apply_torque_last: the local apply_torque only exists on STEER_STEP frames, but this
+        # block runs every frame (was an UnboundLocalError on non-steering frames)
+        ea_simulated_torque = float(np.clip(self.apply_torque_last * 2, -self.CCP.STEER_MAX, self.CCP.STEER_MAX))
         if abs(CS.out.steeringTorque) > abs(ea_simulated_torque):
           ea_simulated_torque = CS.out.steeringTorque
         can_sends.append(self.CCS.create_eps_update(self.packer_pt, self.CAN.cam, CS.eps_stock_values, ea_simulated_torque))
@@ -306,7 +356,7 @@ class CarController(CarControllerBase, IntelligentCruiseButtonManagementInterfac
 
     gra_send_ready = CS.gra_stock_values["COUNTER"] != self.gra_acc_counter_last
     if gra_send_ready:
-      bus_send = self.CAN.main if self.CP.flags & VolkswagenFlags.PQ else self.CAN.ext
+      bus_send = self.CAN.pt if self.CP.flags & VolkswagenFlags.PQ else self.CAN.ext  # CanBus has no 'main'; PQ buttons ride the powertrain bus
       if self.CP.pcmCruise:
         if CC.cruiseControl.cancel or CC.cruiseControl.resume:
           can_sends.append(self.CCS.create_acc_buttons_control(self.packer_pt, bus_send, CS.gra_stock_values,

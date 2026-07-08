@@ -1058,6 +1058,15 @@ FW_VERSIONS = {
       b'\xf1\x871N3907567E \xf1\x890550',
     ],
   },
+  CAR.VOLKSWAGEN_TIGUAN_MK3: {
+    (Ecu.engine, 0x7e0, None): [],
+    (Ecu.transmission, 0x7e1, None): [],
+    (Ecu.srs, 0x715, None): [],
+    (Ecu.eps, 0x712, None): [],
+    (Ecu.fwdRadar, 0x757, None): [
+      b'\xf1\x871N3907567D \xf1\x890436',
+    ],
+  },
   CAR.AUDI_Q2_MK1: {
     (Ecu.engine, 0x7e0, None): [
       b'\xf1\x8704E906027JT\xf1\x894145',
