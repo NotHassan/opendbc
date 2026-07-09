@@ -293,7 +293,10 @@ class CarState(CarStateBase, MadsCarState):
       else:
         hands_on = True
         ret.steeringSlightlyPressed = abs(ret.steeringTorque) > self.CCP.STEER_DRIVER_SLIGHT_PRESS
-      ret.steeringPressed  = self.update_steering_pressed(hands_on and abs(ret.steeringTorque) > 150, 15)
+      # steeringPressed stays a standard torque signal so the lane-change nudge and other consumers
+      # work with palm/force (the capacitive sensor can't see a palm). The capacitive hands-on gate
+      # is applied only to the assist power reduction in the carcontroller (where the jerk fix needs it).
+      ret.steeringPressed  = self.update_steering_pressed(abs(ret.steeringTorque) > 150, 15)
     else:
       ret.steeringPressed  = abs(ret.steeringTorque) > self.CCP.STEER_DRIVER_ALLOWANCE
       ret.steeringSlightlyPressed = abs(ret.steeringTorque) > self.CCP.STEER_DRIVER_SLIGHT_PRESS

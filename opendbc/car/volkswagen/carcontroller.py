@@ -119,10 +119,15 @@ class CarController(CarControllerBase, IntelligentCruiseButtonManagementInterfac
           min_power = max(self.steering_power_last - self.CCP.STEERING_POWER_STEP, self.CCP.STEERING_POWER_MIN)
           max_power = min(self.steering_power_last + self.CCP.STEERING_POWER_STEP, self.CCP.STEERING_POWER_MAX)
 
+          # Capacitive-gated override for the power logic: hands actually on the wheel AND a real
+          # push. Kept separate from carState.steeringPressed so hands-off rack-recoil transients
+          # can't reduce assist (the jerk fix) while steeringPressed stays torque-based for the nudge.
+          driver_override_power = CS.out.steeringSlightlyPressed and abs(CS.out.steeringTorque) > 150
+
           # TIGUAN: after a sustained manual override (>1.5 Nm for ~0.25 s), hold steering power down for
           # ~0.5 s once the driver releases the wheel, instead of ramping assist back up immediately
           if self.tiguan_tuning:
-            if CS.out.steeringPressed:               # touch-gated real push (1.5 Nm sustained + hands on)
+            if driver_override_power:                 # capacitive hands-on + real push
               self.driver_override_ticks += 1
               if self.driver_override_ticks >= 12:   # ~0.25 s at 50 Hz -> real override, not a bend torque spike
                 self.reengage_holdoff_ticks = 25     # ~0.5 s at 50 Hz
@@ -136,9 +141,9 @@ class CarController(CarControllerBase, IntelligentCruiseButtonManagementInterfac
           # ~60ms blips at ~1Hz, and even shallow assist dips visibly disturb tracking (3-7x curvature
           # error). Only treat torque as a driver override once sustained for ~0.3s.
           if self.tiguan_tuning:
-            # gate on steeringPressed (1.5 Nm sustained + capacitive hands-on) so neither natural
-            # bend grip nor hands-off rack-recoil transients reduce assist; only a real push softens
-            if CS.out.steeringPressed:
+            # gate on capacitive hands-on + real push so neither natural bend grip nor hands-off
+            # rack-recoil transients reduce assist; only a real push softens the wheel
+            if driver_override_power:
               self.driver_torque_ticks += 1
             else:
               self.driver_torque_ticks = 0
