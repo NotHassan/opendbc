@@ -9,6 +9,11 @@ from opendbc.car.volkswagen.values import DBC, CanBus, NetworkLocation, Transmis
 from opendbc.car.volkswagen.speed_limit_manager import SpeedLimitManager
 from opendbc.sunnypilot.car.volkswagen.mads import MadsCarState
 
+try:
+  from openpilot.common.params import Params
+except Exception:
+  Params = None
+
 ButtonType = structs.CarState.ButtonEvent.Type
 
 
@@ -38,6 +43,12 @@ class CarState(CarStateBase, MadsCarState):
     self.hca_status_candidate = None        # TIGUAN: watchdog debounce
     self.hca_status_candidate_frames = 0    # TIGUAN: watchdog debounce
     self.gear_shifter_last = GearShifter.park  # TIGUAN: gear held through gearbox-ECU boot window
+    # AutoDetectUnit: mirror the cluster's km/h/mph setting (Kombi_01.KBI_Einheit_Tacho: 0=metric)
+    # into the IsMetric param, so changing the car's display unit switches the comma automatically.
+    self._unit_params = Params() if Params is not None else None
+    self._auto_detect_unit = False
+    self._cluster_metric_last = None
+    self._unit_param_frame = 0
 
   def update_button_enable(self, buttonEvents: list[structs.CarState.ButtonEvent]):
     if not self.CP.pcmCruise:
@@ -269,6 +280,24 @@ class CarState(CarStateBase, MadsCarState):
 
     if self.CP.flags & VolkswagenFlags.KOMBI_PRESENT:
       ret.vEgoCluster = pt_cp.vl["Kombi_01"]["KBI_angez_Geschw"] * CV.KPH_TO_MS
+
+      # AutoDetectUnit: follow the cluster's unit (Kombi_01.KBI_Einheit_Tacho: 0=metric) into the
+      # IsMetric param, so changing the car's display unit switches the comma automatically.
+      if self._unit_params is not None:
+        self._unit_param_frame += 1
+        if self._unit_param_frame % 100 == 0:
+          try:
+            self._auto_detect_unit = self._unit_params.get_bool("AutoDetectUnit")
+          except Exception:
+            self._auto_detect_unit = False
+        if self._auto_detect_unit:
+          cluster_metric = pt_cp.vl["Kombi_01"]["KBI_Einheit_Tacho"] == 0
+          if cluster_metric != self._cluster_metric_last:
+            self._cluster_metric_last = cluster_metric
+            try:
+              self._unit_params.put_bool("IsMetric", bool(cluster_metric))
+            except Exception:
+              pass
     ret.standstill = ret.vEgoRaw == 0
 
     # Update EPS position and state info. For signed values, VW sends the sign in a separate signal.
