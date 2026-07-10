@@ -435,7 +435,13 @@ class CarState(CarStateBase, MadsCarState):
     psd_04_values = alt_cp.vl["PSD_04"] if self.CP.flags & VolkswagenFlags.STOCK_PSD_PRESENT else {} # Predicative Street Data
     psd_05_values = alt_cp.vl["PSD_05"] if self.CP.flags & VolkswagenFlags.STOCK_PSD_PRESENT else {}
     psd_06_values = alt_cp.vl["PSD_06"] if self.CP.flags & VolkswagenFlags.STOCK_PSD_PRESENT else {}
-    psd_06_values = pt_cp.vl["PSD_06"] if not psd_06_values and self.CP.flags & VolkswagenFlags.STOCK_PSD_06_PRESENT else psd_06_values # try to get from bus 0
+    # When PSD is on the powertrain bus (STOCK_PSD_06_PRESENT), read all three from bus 0. PSD_06 had
+    # this fallback but PSD_04/05 (current + upcoming speed limit) did not, so on these cars the speed
+    # limit was never resolved (always 0). Mirror the fallback for all three.
+    if not psd_06_values and self.CP.flags & VolkswagenFlags.STOCK_PSD_06_PRESENT:
+      psd_04_values = pt_cp.vl["PSD_04"]
+      psd_05_values = pt_cp.vl["PSD_05"]
+      psd_06_values = pt_cp.vl["PSD_06"]
     diagnose_01_values = pt_cp.vl["Diagnose_01"] if self.CP.flags & VolkswagenFlags.STOCK_DIAGNOSE_01_PRESENT else {}
 
     self.speed_limit_mgr.enable_predicative_speed_limit(self.enable_predicative_speed_limit, self.enable_pred_react_to_speed_limits, self.enable_pred_react_to_curves)
