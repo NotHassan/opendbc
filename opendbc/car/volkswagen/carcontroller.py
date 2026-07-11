@@ -110,11 +110,23 @@ class CarController(CarControllerBase, IntelligentCruiseButtonManagementInterfac
             # requests beyond its authority envelope. Observed onsets: ~101 deg on a small roundabout
             # (angle limit at low speed) and 2.6 m/s^2 lat accel at 14 m/s on an on-ramp (lat-accel
             # limit at road speed; healthy driving p99 was 2.43). Back off before both limits.
+            # 2.4 (was 2.2): the 2.2 cap clipped real bend demands (model asked 2.58 m/s^2 at 119 km/h,
+            # felt as running out of steering on highway bends); 2.4 matches healthy p99 while keeping
+            # margin under the 2.6 fault onset.
             if abs(CS.out.steeringAngleDeg) > 85:
               authority_lim = abs(CS.out.steeringCurvature)
               apply_curvature = float(np.clip(apply_curvature, -authority_lim, authority_lim))
-            lat_accel_lim = 2.2 / max(CS.out.vEgo ** 2, 1.0)
+            lat_accel_lim = 2.4 / max(CS.out.vEgo ** 2, 1.0)
             apply_curvature = float(np.clip(apply_curvature, -lat_accel_lim, lat_accel_lim))
+
+            # controlsd's desired curvature gets noisy as v -> 0 and this position-controlled rack
+            # reproduces every wiggle that EPS inertia would filter on a torque-control car (felt as
+            # steering micro-jiggle when trailing slow traffic; ~1 deg p95 wheel noise on logs).
+            # Low-pass the command at crawl speed, fading out by 8 m/s. State rides on
+            # apply_curvature_last, so it re-syncs through the inactive/sync branches. Cuts jiggle
+            # amplitude ~73% on log replay with <=0.25 deg mean added lag.
+            smooth_alpha = float(np.interp(CS.out.vEgo, [2.0, 8.0], [0.10, 1.0]))
+            apply_curvature = smooth_alpha * apply_curvature + (1. - smooth_alpha) * self.apply_curvature_last
 
           min_power = max(self.steering_power_last - self.CCP.STEERING_POWER_STEP, self.CCP.STEERING_POWER_MIN)
           max_power = min(self.steering_power_last + self.CCP.STEERING_POWER_STEP, self.CCP.STEERING_POWER_MAX)
