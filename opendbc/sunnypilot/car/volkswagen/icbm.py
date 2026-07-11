@@ -34,6 +34,15 @@ class IntelligentCruiseButtonManagementInterface(IntelligentCruiseButtonManageme
     # opening the gap fast is what makes curve slowdowns effective.
     self.big_step = bool(CP.flags & VolkswagenFlags.TIGUAN_MK3_TUNING)
     self.last_big_frame = 0
+    # Standby memory walk: the VW setpoint memory is adjustable while cruise is disengaged, so a
+    # pending restore can move it before the driver re-engages. ONLY the big-step (Hoch/Runter)
+    # buttons are used in standby -- Setzen/Wiederaufnahme would ENGAGE cruise. Canary guard: if
+    # cruise unexpectedly engages within 1.5 s of a standby press (and the driver's own stalk
+    # didn't do it), send cancel immediately and lock standby pressing out.
+    self.last_standby_press_frame = -10000
+    self.last_user_engage_press_frame = -10000
+    self.standby_lockout = False
+    self.cruise_enabled_prev = False
     self._params = Params() if Params is not None else None
     self._is_metric = True
     self._unit_frame = 0
@@ -46,6 +55,34 @@ class IntelligentCruiseButtonManagementInterface(IntelligentCruiseButtonManageme
 
     up = self.ICBM.sendButton == SendButtonState.increase
     down = self.ICBM.sendButton == SendButtonState.decrease
+
+    if self.big_step:
+      # track the driver's own engage-capable presses (stock stalk set/resume)
+      try:
+        if CS.gra_stock_values.get("GRA_Tip_Setzen", 0) or CS.gra_stock_values.get("GRA_Tip_Wiederaufnahme", 0):
+          self.last_user_engage_press_frame = self.frame
+      except Exception:
+        pass
+      cruise_on = bool(CS.out.cruiseState.enabled)
+      if cruise_on and not self.cruise_enabled_prev:
+        if (self.frame - self.last_standby_press_frame) * DT_CTRL < 1.5 and \
+           (self.frame - self.last_user_engage_press_frame) * DT_CTRL > 1.0:
+          # engagement right after OUR standby press with no driver stalk input: abort hard
+          can_sends.append(self.CCS.create_acc_buttons_control(packer, CAN, CS.gra_stock_values, cancel=True))
+          self.standby_lockout = True
+      self.cruise_enabled_prev = cruise_on
+
+      # standby walk: big-step presses only, while cruise is available but disengaged
+      if (not cruise_on) and CS.out.cruiseState.available and not self.standby_lockout and (up or down):
+        if (self.frame - self.last_button_frame) * DT_CTRL > 0.4:
+          speed_conv = CV.MS_TO_KPH if self._is_metric else CV.MS_TO_MPH
+          diff = self.ICBM.vTarget - CS.out.cruiseState.speedCluster * speed_conv
+          if abs(diff) >= 10.:
+            can_sends.append(self.CCS.create_acc_buttons_control(packer, CAN, CS.gra_stock_values,
+                                                                 up_big=(up and diff > 0), down_big=(down and diff < 0)))
+            self.last_button_frame = self.frame
+            self.last_standby_press_frame = self.frame
+        return can_sends
 
     # set and resume buttons are used to achieve +1 and -1 button presses
     # make sure cruise state is already enabled to not enable car cruise user unintended
