@@ -107,7 +107,8 @@ def create_lka_hud_control(packer, bus, CP, ldw_stock_values, lat_active, steeri
   return packer.make_can_msg("LDW_02", bus, values)
   
 
-def create_acc_buttons_control(packer, bus, gra_stock_values, cancel=False, resume=False, up=False, down=False):
+def create_acc_buttons_control(packer, bus, gra_stock_values, cancel=False, resume=False, up=False, down=False,
+                               up_big=False, down_big=False):
   values = {s: gra_stock_values[s] for s in [
     "GRA_Hauptschalter",           # ACC button, on/off
     "GRA_Typ_Hauptschalter",       # ACC main button type
@@ -121,6 +122,10 @@ def create_acc_buttons_control(packer, bus, gra_stock_values, cancel=False, resu
     "GRA_Abbrechen": cancel,
     "GRA_Tip_Wiederaufnahme": resume or up,
     "GRA_Tip_Setzen": down,
+    # big-step (+/-10 display units) buttons, decoded from a real stalk on the 2025 Tiguan:
+    # every manual +/-10 event was a bare GRA_Tip_Hoch / GRA_Tip_Runter press
+    "GRA_Tip_Hoch": up_big,
+    "GRA_Tip_Runter": down_big,
   })
 
   return packer.make_can_msg("GRA_ACC_01", bus, values)
