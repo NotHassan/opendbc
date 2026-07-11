@@ -18,6 +18,11 @@ class IntelligentCruiseButtonManagementInterface(IntelligentCruiseButtonManageme
   def __init__(self, CP, CP_SP):
     super().__init__(CP, CP_SP)
     self.CCS = pqcan if CP.flags & VolkswagenFlags.PQ else (mebcan if CP.flags & VolkswagenFlags.MEB else mqbcan)
+    # Tiguan MK3: faster setpoint walk for curve assist. Each press is still a single discrete
+    # GRA_ACC_01 injection (no hold semantics; VW's +/-10 needs ~0.5 s hold), just more attempts
+    # per second -- road logs showed single-cycle presses get missed (~2-3.6 kph/s effective of
+    # the theoretical 5 at 0.2 s).
+    self.button_interval = 0.12 if CP.flags & VolkswagenFlags.TIGUAN_MK3_TUNING else 0.2
 
   def update(self, CC_SP, CS, packer, frame, CAN) -> list[CanData]:
     can_sends = []
@@ -31,7 +36,7 @@ class IntelligentCruiseButtonManagementInterface(IntelligentCruiseButtonManageme
     # set and resume buttons are used to achieve +1 and -1 button presses
     # make sure cruise state is already enabled to not enable car cruise user unintended
     if CS.out.cruiseState.enabled and (up or down):
-      if (self.frame - self.last_button_frame) * DT_CTRL > 0.2:
+      if (self.frame - self.last_button_frame) * DT_CTRL > self.button_interval:
         can_sends.append(self.CCS.create_acc_buttons_control(packer, CAN, CS.gra_stock_values, up=up, down=down))
         self.last_button_frame = self.frame
     
