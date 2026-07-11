@@ -56,6 +56,9 @@ class CarController(CarControllerBase, IntelligentCruiseButtonManagementInterfac
       self.CCS = mqbcan
 
     self.apply_torque_last = 0
+    self.standstill_ticks = 0    # TIGUAN: frames at standstill (50Hz steer-block ticks)
+    self.apply_curvature_hold = 0.  # TIGUAN: crawl deadband hold value
+    self.curvature_ema = 0.         # TIGUAN: crawl smoothing state (own state; deadband must not feed back)
     self.apply_curvature_last = 0.
     self.steering_power_last = 0
     self.tiguan_tuning = bool(CP.flags & VolkswagenFlags.TIGUAN_MK3_TUNING)
@@ -97,7 +100,18 @@ class CarController(CarControllerBase, IntelligentCruiseButtonManagementInterfac
         # MEB rack can be used continously without time limits
         # maximum real steering angle change ~ 120-130 deg/s
 
-        if CC.latActive:
+        if self.tiguan_tuning:
+          # The rack refuses to hold active HCA at v=0: it cycles ready<->active at ~1 Hz while our
+          # command keeps re-arming it, and the wheel physically twitches on every transition
+          # (23/23 standstill jerk events aligned with QFK status flips, route 0000049a). Steering
+          # a stopped car is useless anyway: go passive after 0.5 s at standstill (the inactive
+          # branch syncs curvature and ramps power to zero), re-engage on movement.
+          if CS.out.vEgoRaw < 0.15:
+            self.standstill_ticks += 1
+          else:
+            self.standstill_ticks = 0
+
+        if CC.latActive and not (self.tiguan_tuning and self.standstill_ticks > 25):
           hca_enabled = True
           # no closed loop correction for FORD as long as the current curvature car signal is verified
           steer_correction = CS.out.steeringCurvature - CC.currentCurvature + CC.rollCompensation if not (self.CP.flags & VolkswagenFlags.FORD_CAR) else 0.
@@ -125,8 +139,20 @@ class CarController(CarControllerBase, IntelligentCruiseButtonManagementInterfac
             # Low-pass the command at crawl speed, fading out by 8 m/s. State rides on
             # apply_curvature_last, so it re-syncs through the inactive/sync branches. Cuts jiggle
             # amplitude ~73% on log replay with <=0.25 deg mean added lag.
-            smooth_alpha = float(np.interp(CS.out.vEgo, [2.0, 8.0], [0.10, 1.0]))
-            apply_curvature = smooth_alpha * apply_curvature + (1. - smooth_alpha) * self.apply_curvature_last
+            smooth_alpha = float(np.interp(CS.out.vEgo, [2.0, 8.0], [0.04, 1.0]))
+            self.curvature_ema = smooth_alpha * apply_curvature + (1. - smooth_alpha) * self.curvature_ema
+
+            # Crawl deadband: even smoothed, the model's path wanders 1-4 deg wheel-equivalent at
+            # walking pace and the position-controlled rack reproduces it (felt as jiggle; crawl
+            # jerks did NOT align with rack status flips, 5/39 -- it's the command). Hold the wheel
+            # still unless the command genuinely moves; fades out by 8 m/s. The EMA keeps its own
+            # state so a held output cannot stall a genuine slow turn.
+            deadband = float(np.interp(CS.out.vEgo, [2.0, 8.0], [2.0e-4, 0.]))
+            if abs(self.curvature_ema - self.apply_curvature_hold) <= deadband:
+              apply_curvature = self.apply_curvature_hold
+            else:
+              self.apply_curvature_hold = self.curvature_ema
+              apply_curvature = self.curvature_ema
 
           min_power = max(self.steering_power_last - self.CCP.STEERING_POWER_STEP, self.CCP.STEERING_POWER_MIN)
           max_power = min(self.steering_power_last + self.CCP.STEERING_POWER_STEP, self.CCP.STEERING_POWER_MAX)
@@ -182,6 +208,9 @@ class CarController(CarControllerBase, IntelligentCruiseButtonManagementInterfac
 
         can_sends.append(self.CCS.create_steering_control(self.packer_pt, self.CAN.pt, apply_curvature, hca_enabled, steering_power))
         self.apply_curvature_last = apply_curvature
+        if not hca_enabled or steering_power < self.CCP.STEERING_POWER_MIN:
+          self.apply_curvature_hold = apply_curvature  # re-sync deadband through inactive/sync phases
+          self.curvature_ema = apply_curvature
         self.steering_power_last = steering_power
         
       else:
