@@ -170,3 +170,7 @@ class CarControlSP:
 @auto_dataclass
 class CarStateSP:
   speedLimit: float = auto_field()
+  # driver stalk presses, latched ~250ms at the 100Hz source so 20Hz consumers cannot miss them
+  # (button EVENTS are single-frame and get dropped by latest-only subscribers ~80% of the time)
+  userCruisePressLatched: bool = auto_field()
+  userSetEngagePressLatched: bool = auto_field()

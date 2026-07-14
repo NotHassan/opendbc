@@ -45,6 +45,8 @@ class CarState(CarStateBase, MadsCarState):
     self.gear_shifter_last = GearShifter.park  # TIGUAN: gear held through gearbox-ECU boot window
     # AutoDetectUnit: mirror the cluster's km/h/mph setting (Kombi_01.KBI_Einheit_Tacho: 0=metric)
     # into the IsMetric param, so changing the car's display unit switches the comma automatically.
+    self._press_latch = 0      # frames remaining on the user-press latch (100Hz)
+    self._set_engage_latch = 0
     self._unit_params = Params() if Params is not None else None
     self._auto_detect_unit = False
     self._cluster_metric_last = None
@@ -269,7 +271,23 @@ class CarState(CarStateBase, MadsCarState):
   def update_meb(self, pt_cp, cam_cp, alt_cp, ext_cp) -> tuple[structs.CarState, structs.CarStateSP]:
     ret = structs.CarState()
     ret_sp = structs.CarStateSP()
-    
+
+    # user-press latch: stalk button bits from the stock GRA stream, held 250ms so slower
+    # consumers (plannerd at 20Hz) can never miss a press
+    gra = self.gra_stock_values if hasattr(self, 'gra_stock_values') and self.gra_stock_values else {}
+    if gra:
+      hoch = bool(gra.get("GRA_Tip_Hoch", 0)); runter = bool(gra.get("GRA_Tip_Runter", 0))
+      setz = bool(gra.get("GRA_Tip_Setzen", 0)); wied = bool(gra.get("GRA_Tip_Wiederaufnahme", 0))
+      cruise_on = bool(ret.cruiseState.enabled)
+      if hoch or runter or (cruise_on and (setz or wied)):
+        self._press_latch = 25
+      if (not cruise_on) and setz:
+        self._set_engage_latch = 25
+    self._press_latch = max(0, self._press_latch - 1)
+    self._set_engage_latch = max(0, self._set_engage_latch - 1)
+    ret_sp.userCruisePressLatched = self._press_latch > 0
+    ret_sp.userSetEngagePressLatched = self._set_engage_latch > 0
+
     # Update vehicle speed and acceleration from ABS wheel speeds.
     self.parse_wheel_speeds(ret,
       pt_cp.vl["ESC_51"]["VL_Radgeschw"],
