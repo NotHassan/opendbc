@@ -465,8 +465,15 @@ class CarState(CarStateBase, MadsCarState):
     self.speed_limit_mgr.enable_predicative_speed_limit(self.enable_predicative_speed_limit, self.enable_pred_react_to_speed_limits, self.enable_pred_react_to_curves)
     self.speed_limit_mgr.update(ret.vEgo, psd_04_values, psd_05_values, psd_06_values, vze_04_values, raining, diagnose_01_values)
     ret.cruiseState.speedLimit = self.speed_limit_mgr.get_speed_limit()
-    ret.cruiseState.speedLimitPredicative = self.speed_limit_mgr.get_speed_limit_predicative()
+    pred = self.speed_limit_mgr.get_speed_limit_predicative()
     self.speed_limit_predicative_type = self.speed_limit_mgr.get_speed_limit_predicative_type()
+    if self.CP.flags & VolkswagenFlags.TIGUAN_MK3_TUNING:
+      # publish CURVE-type predictions only: the planner's early-hint layer must never move the
+      # setpoint for an upcoming speed-limit zone (the driver may have zone assist disabled)
+      from opendbc.car.volkswagen.speed_limit_manager import PSD_TYPE_CURV_SPEED
+      ret.cruiseState.speedLimitPredicative = pred if self.speed_limit_predicative_type == PSD_TYPE_CURV_SPEED else 0.
+    else:
+      ret.cruiseState.speedLimitPredicative = pred
 
     ret_sp.speedLimit = ret.cruiseState.speedLimit
     

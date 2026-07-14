@@ -26,6 +26,7 @@ class SpeedLimitManager:
     # Tiguan MY2025: curve speeds sized to the rack's authority (hard-faults ~2.5 m/s^2, command
     # cap 2.2) instead of ISO comfort -- slowing before the curve keeps lateral from saturating
     from opendbc.car.volkswagen.values import VolkswagenFlags
+    self.allow_highway_curves = bool(car_params.flags & VolkswagenFlags.TIGUAN_MK3_TUNING)
     self.curve_lateral_accel = 2.2 if (car_params.flags & VolkswagenFlags.TIGUAN_MK3_TUNING) else ISO_LATERAL_ACCEL
     self.CP = car_params
     self.v_limit_psd = NOT_SET
@@ -332,8 +333,11 @@ class SpeedLimitManager:
 
     # on ramp is probably type 2 TODO
     # for now only allow non urban, there are problems with highway curvature data
+    # TIGUAN: highway curve speeds allowed -- they only feed the planner's EARLY-HINT layer, which
+    # caps the trim at ~10 km/h below the setpoint, so unreliable values are bounded by design
     street_type = seg.get("StreetType", NOT_SET)
-    street_type_allowed = True if street_type == STREET_TYPE_NONURBAN or (street_type == STREET_TYPE_HIGHWAY and ramp_allowed_on_ramp) else False
+    street_type_allowed = True if street_type == STREET_TYPE_NONURBAN or \
+                                  (street_type == STREET_TYPE_HIGHWAY and (ramp_allowed_on_ramp or self.allow_highway_curves)) else False
     
     speed_curve = seg.get("Curve_Speed", NOT_SET)
 
