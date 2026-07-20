@@ -1,5 +1,7 @@
 import time
 import math
+from dataclasses import dataclass
+from enum import IntEnum
 
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.volkswagen.values import VolkswagenFlags
@@ -19,6 +21,37 @@ PSD_TYPE_CURV_SPEED = 2
 PSD_CURV_SPEED_DECAY = 4
 PSD_UNIT_KPH = 0
 PSD_UNIT_MPH = 1
+
+
+class MapConfidence(IntEnum):
+  none = 0
+  medium = 1
+  high = 2
+
+
+class BendPreviewReason(IntEnum):
+  none = 0
+  sourceUnavailable = 1
+  ambiguousLocation = 2
+  locationError = 3
+  ambiguousPath = 4
+  staleSegment = 5
+  invalidCurvature = 6
+  invalidDistance = 7
+  sanityFilter = 8
+
+
+@dataclass(frozen=True)
+class BendPreview:
+  valid: bool = False
+  curvature: float = 0.0
+  distance: float = 0.0
+  length: float = 0.0
+  location_error: int = 0
+  map_confidence: MapConfidence = MapConfidence.none
+  map_match_quality: int = 0
+  geometry_quality: int = 0
+  rejection_reason: BendPreviewReason = BendPreviewReason.sourceUnavailable
 
 
 class SpeedLimitManager:
@@ -42,7 +75,10 @@ class SpeedLimitManager:
     self.predicative_speed_limit = predicative_speed_limit
     self.predicative_curve = predicative_curve
     self.predicative_segments = {}
-    self.current_predicative_segment = {"ID": NOT_SET, "Length": NOT_SET, "Speed": NOT_SET, "StreetType": NOT_SET, "OnRampExit": NOT_SET}
+    self.current_predicative_segment = {"ID": NOT_SET, "Length": NOT_SET, "Speed": NOT_SET, "StreetType": NOT_SET, "OnRampExit": NOT_SET,
+                                        "LocationUnique": NOT_SET, "LocationError": NOT_SET}
+    self.psd_map_match_quality = NOT_SET
+    self.psd_geometry_quality = NOT_SET
     self.v_limit_psd_next_last_timestamp = 0
     self.v_limit_psd_next_last = NOT_SET
     self.v_limit_psd_next_decay_time = NOT_SET
@@ -133,8 +169,11 @@ class SpeedLimitManager:
 
   def _receive_speed_unit_psd(self, psd_06):
     # keep it simple for now, the unit is supplied shortly before the corresponding speed limits are supplied for given segment ID
-    if psd_06["PSD_06_Mux"] == 0 and psd_06["PSD_Sys_Segment_ID"] > 1:
-      self.v_limit_speed_unit_psd = psd_06["PSD_Sys_Geschwindigkeit_Einheit"]
+    if psd_06["PSD_06_Mux"] == 0:
+      self.psd_map_match_quality = psd_06.get("PSD_Sys_Mapmatchingguete", NOT_SET)
+      self.psd_geometry_quality = psd_06.get("PSD_Sys_Geometrieguete", NOT_SET)
+      if psd_06["PSD_Sys_Segment_ID"] > 1:
+        self.v_limit_speed_unit_psd = psd_06["PSD_Sys_Geschwindigkeit_Einheit"]
 
   def _convert_raw_speed_psd(self, raw_speed, street_type):
     speed = NOT_SET
@@ -169,6 +208,8 @@ class SpeedLimitManager:
     self.v_limit_vze = v_limit_vze
 
   def _receive_current_segment_psd(self, psd_05):
+    self.current_predicative_segment["LocationUnique"] = psd_05["PSD_Pos_Standort_Eindeutig"]
+    self.current_predicative_segment["LocationError"] = psd_05["PSD_Pos_Fehler_Laengsrichtung"]
     if psd_05["PSD_Pos_Standort_Eindeutig"] == 1 and psd_05["PSD_Pos_Segment_ID"] != NOT_SET:
       self.current_predicative_segment["Length"] = psd_05["PSD_Pos_Segmentlaenge"]
       
@@ -324,7 +365,7 @@ class SpeedLimitManager:
       
     return all(checks)
 
-  def _speed_limit_curve_allowed(self, seg):
+  def _speed_limit_curve_allowed(self, seg, curve_speed=NOT_SET):
     currently_on_ramp = self.current_predicative_segment.get("OnRampExit", False)
     seg_on_ramp = seg.get("OnRampExit", False)
     
@@ -339,7 +380,7 @@ class SpeedLimitManager:
     street_type_allowed = True if street_type == STREET_TYPE_NONURBAN or \
                                   (street_type == STREET_TYPE_HIGHWAY and (ramp_allowed_on_ramp or self.allow_highway_curves)) else False
     
-    speed_curve = seg.get("Curve_Speed", NOT_SET)
+    speed_curve = curve_speed if curve_speed != NOT_SET else seg.get("Curve_Speed", NOT_SET)
 
     if NOT_SET not in (self.v_limit_output_last, speed_curve):
       diff_p = 100 * speed_curve / self.v_limit_output_last
@@ -354,6 +395,114 @@ class SpeedLimitManager:
     ]
       
     return all(checks)
+
+  def _bend_preview(self, reason, map_confidence=MapConfidence.none, curvature=0.0, distance=0.0, length=0.0):
+    return BendPreview(
+      valid=reason == BendPreviewReason.none,
+      curvature=curvature,
+      distance=distance,
+      length=length,
+      location_error=self.current_predicative_segment.get("LocationError", NOT_SET),
+      map_confidence=map_confidence,
+      map_match_quality=self.psd_map_match_quality,
+      geometry_quality=self.psd_geometry_quality,
+      rejection_reason=reason,
+    )
+
+  def _get_map_confidence(self):
+    if self.current_predicative_segment.get("LocationUnique") != 1:
+      return MapConfidence.none, BendPreviewReason.ambiguousLocation
+
+    location_error = self.current_predicative_segment.get("LocationError", NOT_SET)
+    if location_error in (1, 2):
+      return MapConfidence.high, BendPreviewReason.none
+    if location_error in (3, 4):
+      return MapConfidence.medium, BendPreviewReason.none
+    return MapConfidence.none, BendPreviewReason.locationError
+
+  @staticmethod
+  def _valid_curvature(curvature):
+    return isinstance(curvature, (int, float)) and math.isfinite(curvature) and curvature != NOT_SET
+
+  def _get_unique_successor(self, segment_id, now):
+    successors = [seg for seg in self.predicative_segments.values() if seg.get("ID_Prev") == segment_id]
+    fresh_successors = [seg for seg in successors if now - seg.get("Timestamp", 0) <= SEGMENT_DECAY]
+    if len(fresh_successors) > 1:
+      return None, BendPreviewReason.ambiguousPath
+    if len(fresh_successors) == 1:
+      return fresh_successors[0], BendPreviewReason.none
+    if successors:
+      return None, BendPreviewReason.staleSegment
+    return None, BendPreviewReason.none
+
+  def get_bend_preview(self, current_speed_ms: float, warning_lat_accel: float = 2.0) -> BendPreview:
+    current_id = self.current_predicative_segment.get("ID", NOT_SET)
+    if current_id == NOT_SET:
+      return self._bend_preview(BendPreviewReason.sourceUnavailable)
+
+    map_confidence, location_reason = self._get_map_confidence()
+    if location_reason != BendPreviewReason.none:
+      return self._bend_preview(location_reason, map_confidence)
+
+    total_distance = self.current_predicative_segment.get("Length", NOT_SET)
+    now = time.time()
+    segment_id = current_id
+    visited = {current_id}
+    earliest_valid = None
+    earliest_unsafe = None
+    saw_invalid_distance = False
+    saw_sanity_filter = False
+
+    while True:
+      segment, path_reason = self._get_unique_successor(segment_id, now)
+      if path_reason != BendPreviewReason.none:
+        return self._bend_preview(path_reason, map_confidence)
+      if segment is None:
+        break
+
+      segment_id = segment["ID"]
+      if segment_id in visited:
+        return self._bend_preview(BendPreviewReason.ambiguousPath, map_confidence)
+      visited.add(segment_id)
+
+      length = segment.get("Length", NOT_SET)
+      curvatures = ((segment.get("Curvature_Begin", NOT_SET), 0.0),
+                    (segment.get("Curvature_End", NOT_SET), length))
+      for curvature, offset in curvatures:
+        if not self._valid_curvature(curvature):
+          continue
+
+        distance = total_distance + offset
+        if not isinstance(distance, (int, float)) or not math.isfinite(distance) or distance <= 0:
+          saw_invalid_distance = True
+          continue
+
+        curve_speed = self._calculate_curve_speed(curvature)
+        if not self._speed_limit_curve_allowed(segment, curve_speed):
+          saw_sanity_filter = True
+          continue
+
+        candidate = (distance, curvature, length)
+        if earliest_valid is None or distance < earliest_valid[0]:
+          earliest_valid = candidate
+        if current_speed_ms ** 2 * abs(curvature) >= warning_lat_accel:
+          if earliest_unsafe is None or distance < earliest_unsafe[0]:
+            earliest_unsafe = candidate
+
+      if not isinstance(length, (int, float)) or not math.isfinite(length):
+        saw_invalid_distance = True
+        break
+      total_distance += length
+
+    candidate = earliest_unsafe or earliest_valid
+    if candidate is not None:
+      distance, curvature, length = candidate
+      return self._bend_preview(BendPreviewReason.none, map_confidence, curvature, distance, length)
+    if saw_invalid_distance:
+      return self._bend_preview(BendPreviewReason.invalidDistance, map_confidence)
+    if saw_sanity_filter:
+      return self._bend_preview(BendPreviewReason.sanityFilter, map_confidence)
+    return self._bend_preview(BendPreviewReason.invalidCurvature, map_confidence)
 
   def _hit_linear_profile(self, v0_ms, a, total_dist_m, L_m, v_b_kmh, v_e_kmh):
     if L_m is None or L_m <= 0:
