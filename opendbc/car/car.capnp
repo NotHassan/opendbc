@@ -263,6 +263,7 @@ struct CarState {
     nonAdaptive @5 :Bool;
     speedLimit @7 :Float32;
     speedLimitPredicative @8 :Float32;
+    bendPreview @9 :BendPreview;
     speedOffsetDEPRECATED @3 :Float32;
   }
 
@@ -311,6 +312,38 @@ struct CarState {
   eventsDEPRECATED @13 :List(OnroadEventDEPRECATED);
   clutchPressedDEPRECATED @28 :Bool;
   engineRpmDEPRECATED @46 :Float32;
+}
+
+# ******* predictive bend preview *******
+
+struct BendPreview {
+  valid @0 :Bool;
+  curvature @1 :Float32;          # signed, 1/m
+  distance @2 :Float32;           # metres to critical point
+  length @3 :Float32;             # metres of curve region
+  locationError @4 :UInt8;        # raw PSD error class
+  mapConfidence @5 :MapConfidence;
+  mapMatchQuality @6 :UInt8;      # raw PSD value
+  geometryQuality @7 :UInt8;      # raw PSD value
+  rejectionReason @8 :RejectionReason;
+
+  enum MapConfidence {
+    none @0;
+    medium @1;
+    high @2;
+  }
+
+  enum RejectionReason {
+    none @0;
+    sourceUnavailable @1;
+    ambiguousLocation @2;
+    locationError @3;
+    ambiguousPath @4;
+    staleSegment @5;
+    invalidCurvature @6;
+    invalidDistance @7;
+    sanityFilter @8;
+  }
 }
 
 # ******* radar state @ 20hz *******

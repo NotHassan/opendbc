@@ -74,6 +74,19 @@ class CarState(CarStateBase, MadsCarState):
 
     return button_events
 
+  @staticmethod
+  def _publish_bend_preview(ret, preview):
+    bend_preview = ret.cruiseState.bendPreview
+    bend_preview.valid = preview.valid
+    bend_preview.curvature = preview.curvature
+    bend_preview.distance = preview.distance
+    bend_preview.length = preview.length
+    bend_preview.locationError = preview.location_error
+    bend_preview.mapConfidence = preview.map_confidence.name
+    bend_preview.mapMatchQuality = preview.map_match_quality
+    bend_preview.geometryQuality = preview.geometry_quality
+    bend_preview.rejectionReason = preview.rejection_reason.name
+
   def update(self, can_parsers) -> tuple[structs.CarState, structs.CarStateSP]:
     pt_cp = can_parsers[Bus.pt]
     cam_cp = can_parsers[Bus.cam]
@@ -464,6 +477,7 @@ class CarState(CarStateBase, MadsCarState):
 
     self.speed_limit_mgr.enable_predicative_speed_limit(self.enable_predicative_speed_limit, self.enable_pred_react_to_speed_limits, self.enable_pred_react_to_curves)
     self.speed_limit_mgr.update(ret.vEgo, psd_04_values, psd_05_values, psd_06_values, vze_04_values, raining, diagnose_01_values)
+    self._publish_bend_preview(ret, self.speed_limit_mgr.get_bend_preview(ret.vEgo))
     ret.cruiseState.speedLimit = self.speed_limit_mgr.get_speed_limit()
     pred = self.speed_limit_mgr.get_speed_limit_predicative()
     self.speed_limit_predicative_type = self.speed_limit_mgr.get_speed_limit_predicative_type()

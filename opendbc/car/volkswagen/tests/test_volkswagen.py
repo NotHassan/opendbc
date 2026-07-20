@@ -3,8 +3,11 @@ import re
 import unittest
 
 from opendbc.car import DT_CTRL
+from opendbc.car import structs
 from opendbc.car.structs import CarParams
 from opendbc.car.volkswagen.carcontroller import HCAMitigation
+from opendbc.car.volkswagen.carstate import CarState
+from opendbc.car.volkswagen.speed_limit_manager import BendPreview, BendPreviewReason, MapConfidence
 from opendbc.car.volkswagen.values import CAR, CarControllerParams as CCP, FW_QUERY_CONFIG, WMI
 from opendbc.car.volkswagen.fingerprints import FW_VERSIONS
 
@@ -28,6 +31,58 @@ class TestVolkswagenHCAMitigation(unittest.TestCase):
         should_nudge = actuator_value != 0 and frame == self.STUCK_TORQUE_FRAMES
         expected_torque = actuator_value - (1, -1)[actuator_value < 0] if should_nudge else actuator_value
         assert hca_mitigation.update(actuator_value, actuator_value) == expected_torque, f"{frame=}"
+
+
+class TestVolkswagenBendPreviewPublication(unittest.TestCase):
+  def test_car_state_exposes_and_populates_bend_preview(self):
+    ret = structs.CarState()
+    ret.cruiseState.speedLimit = 12.3
+    preview = BendPreview(
+      valid=True,
+      curvature=-0.004,
+      distance=123.4,
+      length=56.7,
+      location_error=4,
+      map_confidence=MapConfidence.medium,
+      map_match_quality=5,
+      geometry_quality=6,
+      rejection_reason=BendPreviewReason.none,
+    )
+
+    self.assertTrue(hasattr(ret.cruiseState, "bendPreview"))
+    CarState._publish_bend_preview(ret, preview)
+
+    published = ret.cruiseState.bendPreview
+    self.assertTrue(published.valid)
+    self.assertAlmostEqual(published.curvature, preview.curvature, places=6)
+    self.assertAlmostEqual(published.distance, preview.distance, places=5)
+    self.assertAlmostEqual(published.length, preview.length, places=5)
+    self.assertEqual(published.locationError, preview.location_error)
+    self.assertEqual(published.mapConfidence, preview.map_confidence.name)
+    self.assertEqual(published.mapMatchQuality, preview.map_match_quality)
+    self.assertEqual(published.geometryQuality, preview.geometry_quality)
+    self.assertEqual(published.rejectionReason, preview.rejection_reason.name)
+    self.assertAlmostEqual(ret.cruiseState.speedLimit, 12.3, places=5)
+
+  def test_invalid_preview_preserves_replay_diagnostics(self):
+    ret = structs.CarState()
+    preview = BendPreview(
+      location_error=7,
+      map_confidence=MapConfidence.none,
+      map_match_quality=8,
+      geometry_quality=9,
+      rejection_reason=BendPreviewReason.locationError,
+    )
+
+    CarState._publish_bend_preview(ret, preview)
+
+    published = ret.cruiseState.bendPreview
+    self.assertFalse(published.valid)
+    self.assertEqual(published.locationError, preview.location_error)
+    self.assertEqual(published.mapConfidence, preview.map_confidence.name)
+    self.assertEqual(published.mapMatchQuality, preview.map_match_quality)
+    self.assertEqual(published.geometryQuality, preview.geometry_quality)
+    self.assertEqual(published.rejectionReason, preview.rejection_reason.name)
 
 class TestVolkswagenPlatformConfigs(unittest.TestCase):
   def test_spare_part_fw_pattern(self):

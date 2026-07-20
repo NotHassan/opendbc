@@ -2,10 +2,16 @@ from types import SimpleNamespace
 
 import pytest
 
+from opendbc.car import structs
 from opendbc.car.volkswagen.speed_limit_manager import BendPreviewReason, MapConfidence, SpeedLimitManager
 
 
 NOW = 1_000.0
+
+
+def test_bend_preview_enum_ordinals_match_car_state_contract():
+  assert structs.car.BendPreview.MapConfidence.schema.enumerants == {member.name: member.value for member in MapConfidence}
+  assert structs.car.BendPreview.RejectionReason.schema.enumerants == {member.name: member.value for member in BendPreviewReason}
 
 
 def psd_04(segment_id, previous_id, length, curvature_begin=0, curvature_end=0, sign=0,
