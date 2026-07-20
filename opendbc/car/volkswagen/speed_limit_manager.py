@@ -405,6 +405,12 @@ class SpeedLimitManager:
       
     return all(checks)
 
+  def _bend_preview_curve_allowed(self, seg, curve_speed):
+    if seg.get("StreetType", NOT_SET) == STREET_TYPE_URBAN:
+      seg = dict(seg)
+      seg["StreetType"] = STREET_TYPE_NONURBAN
+    return self._speed_limit_curve_allowed(seg, curve_speed)
+
   def _bend_preview(self, reason, map_confidence=MapConfidence.none, curvature=0.0, distance=0.0, length=0.0):
     return BendPreview(
       valid=reason == BendPreviewReason.none,
@@ -496,7 +502,7 @@ class SpeedLimitManager:
           continue
 
         curve_speed = self._calculate_curve_speed(curvature)
-        if not self._speed_limit_curve_allowed(segment, curve_speed):
+        if not self._bend_preview_curve_allowed(segment, curve_speed):
           saw_sanity_filter = True
           continue
 

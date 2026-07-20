@@ -245,11 +245,10 @@ def test_negative_successor_length_is_rejected_before_its_curve_is_evaluated(mon
   ("street_category", "ramp", "output_limit_kph"),
   [
     (2, 1, 0.0),
-    (1, 0, 0.0),
     (2, 0, 300.0),
   ],
 )
-def test_ramp_street_and_gross_sanity_filters_are_rejected(monkeypatch, street_category, ramp, output_limit_kph):
+def test_ramp_and_gross_sanity_filters_are_rejected(monkeypatch, street_category, ramp, output_limit_kph):
   manager = make_manager(monkeypatch)
   add_segment(manager, psd_04(1, 0, 100.0), 40.0)
   add_segment(manager, psd_04(2, 1, 25.0, curvature_end=1, street_category=street_category, ramp=ramp), 40.0)
@@ -259,6 +258,24 @@ def test_ramp_street_and_gross_sanity_filters_are_rejected(monkeypatch, street_c
 
   assert not result.valid
   assert result.rejection_reason == BendPreviewReason.sanityFilter
+
+
+def test_advisory_preview_exposes_urban_curve_without_enabling_curve_speed_control(monkeypatch):
+  manager = make_manager(monkeypatch)
+  add_segment(manager, psd_04(1, 0, 100.0), 40.0)
+  add_segment(manager, psd_04(2, 1, 25.0, curvature_end=55, street_category=1), 40.0)
+  urban_segment = manager.predicative_segments[2]
+
+  assert not manager._speed_limit_curve_allowed(
+    urban_segment,
+    manager._calculate_curve_speed(urban_segment["Curvature_End"]),
+  )
+
+  result = manager.get_bend_preview(current_speed_ms=30.0)
+
+  assert result.valid
+  assert result.curvature == pytest.approx(0.004)
+  assert result.distance == pytest.approx(65.0)
 
 
 def test_no_psd_source_is_rejected(monkeypatch):
