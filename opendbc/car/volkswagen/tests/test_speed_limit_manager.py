@@ -146,6 +146,16 @@ def test_ten_second_stale_current_location_is_rejected(monkeypatch):
   assert result.rejection_reason == BendPreviewReason.staleSegment
 
 
+def test_zero_current_segment_id_does_not_reuse_the_previous_segment(monkeypatch):
+  manager = manager_with_unique_path(monkeypatch)
+  manager.update(30.0, psd_04(1, 0, 100.0), psd_05(segment_id=0), psd_06(), {}, False, {})
+
+  result = manager.get_bend_preview(current_speed_ms=30.0)
+
+  assert not result.valid
+  assert result.rejection_reason == BendPreviewReason.sourceUnavailable
+
+
 def test_unsafe_later_curve_beats_an_earlier_safe_curve(monkeypatch):
   manager = make_manager(monkeypatch)
   add_segment(manager, psd_04(1, 0, 100.0), 40.0)
@@ -197,6 +207,17 @@ def test_missing_curvature_is_rejected(monkeypatch):
 @pytest.mark.parametrize("current_remaining", [-25.0, 0.0])
 def test_nonpositive_curve_distance_is_rejected(monkeypatch, current_remaining):
   manager = manager_with_unique_path(monkeypatch, current_remaining=current_remaining, bend_length=0.0)
+
+  result = manager.get_bend_preview(current_speed_ms=30.0)
+
+  assert not result.valid
+  assert result.rejection_reason == BendPreviewReason.invalidDistance
+
+
+def test_negative_successor_length_is_rejected_before_its_curve_is_evaluated(monkeypatch):
+  manager = make_manager(monkeypatch)
+  add_segment(manager, psd_04(1, 0, 100.0), 40.0)
+  add_segment(manager, psd_04(2, 1, -25.0, curvature_begin=55), 40.0)
 
   result = manager.get_bend_preview(current_speed_ms=30.0)
 

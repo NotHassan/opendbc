@@ -211,6 +211,14 @@ class SpeedLimitManager:
     self.current_predicative_segment["LocationUnique"] = psd_05["PSD_Pos_Standort_Eindeutig"]
     self.current_predicative_segment["LocationError"] = psd_05["PSD_Pos_Fehler_Laengsrichtung"]
     self.current_predicative_segment["Timestamp"] = time.time()
+    if psd_05["PSD_Pos_Segment_ID"] == NOT_SET:
+      self.current_predicative_segment["ID"] = NOT_SET
+      self.current_predicative_segment["Length"] = NOT_SET
+      self.current_predicative_segment["Speed"] = NOT_SET
+      self.current_predicative_segment["StreetType"] = NOT_SET
+      self.current_predicative_segment["OnRampExit"] = NOT_SET
+      return
+
     if psd_05["PSD_Pos_Standort_Eindeutig"] == 1 and psd_05["PSD_Pos_Segment_ID"] != NOT_SET:
       self.current_predicative_segment["Length"] = psd_05["PSD_Pos_Segmentlaenge"]
       
@@ -470,6 +478,9 @@ class SpeedLimitManager:
       visited.add(segment_id)
 
       length = segment.get("Length", NOT_SET)
+      if not isinstance(length, (int, float)) or not math.isfinite(length) or length <= 0:
+        return self._bend_preview(BendPreviewReason.invalidDistance, map_confidence)
+
       curvatures = ((segment.get("Curvature_Begin", NOT_SET), 0.0),
                     (segment.get("Curvature_End", NOT_SET), length))
       for curvature, offset in curvatures:
@@ -493,9 +504,6 @@ class SpeedLimitManager:
           if earliest_unsafe is None or distance < earliest_unsafe[0]:
             earliest_unsafe = candidate
 
-      if not isinstance(length, (int, float)) or not math.isfinite(length):
-        saw_invalid_distance = True
-        break
       total_distance += length
 
     candidate = earliest_unsafe or earliest_valid
