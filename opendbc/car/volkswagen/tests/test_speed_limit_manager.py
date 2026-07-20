@@ -214,6 +214,16 @@ def test_nonpositive_curve_distance_is_rejected(monkeypatch, current_remaining):
   assert result.rejection_reason == BendPreviewReason.invalidDistance
 
 
+@pytest.mark.parametrize("current_remaining", [-25.0, 0.0])
+def test_nonpositive_current_remainder_is_rejected_before_successor_offsets(monkeypatch, current_remaining):
+  manager = manager_with_unique_path(monkeypatch, current_remaining=current_remaining, bend_length=50.0)
+
+  result = manager.get_bend_preview(current_speed_ms=30.0)
+
+  assert not result.valid
+  assert result.rejection_reason == BendPreviewReason.invalidDistance
+
+
 def test_negative_successor_length_is_rejected_before_its_curve_is_evaluated(monkeypatch):
   manager = make_manager(monkeypatch)
   add_segment(manager, psd_04(1, 0, 100.0), 40.0)

@@ -458,6 +458,9 @@ class SpeedLimitManager:
       return self._bend_preview(BendPreviewReason.staleSegment, map_confidence)
 
     total_distance = self.current_predicative_segment.get("Length", NOT_SET)
+    if not isinstance(total_distance, (int, float)) or not math.isfinite(total_distance) or total_distance <= 0:
+      return self._bend_preview(BendPreviewReason.invalidDistance, map_confidence)
+
     segment_id = current_id
     visited = {current_id}
     earliest_valid = None
