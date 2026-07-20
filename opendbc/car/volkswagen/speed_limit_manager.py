@@ -76,7 +76,7 @@ class SpeedLimitManager:
     self.predicative_curve = predicative_curve
     self.predicative_segments = {}
     self.current_predicative_segment = {"ID": NOT_SET, "Length": NOT_SET, "Speed": NOT_SET, "StreetType": NOT_SET, "OnRampExit": NOT_SET,
-                                        "LocationUnique": NOT_SET, "LocationError": NOT_SET}
+                                        "LocationUnique": NOT_SET, "LocationError": NOT_SET, "Timestamp": NOT_SET}
     self.psd_map_match_quality = NOT_SET
     self.psd_geometry_quality = NOT_SET
     self.v_limit_psd_next_last_timestamp = 0
@@ -210,6 +210,7 @@ class SpeedLimitManager:
   def _receive_current_segment_psd(self, psd_05):
     self.current_predicative_segment["LocationUnique"] = psd_05["PSD_Pos_Standort_Eindeutig"]
     self.current_predicative_segment["LocationError"] = psd_05["PSD_Pos_Fehler_Laengsrichtung"]
+    self.current_predicative_segment["Timestamp"] = time.time()
     if psd_05["PSD_Pos_Standort_Eindeutig"] == 1 and psd_05["PSD_Pos_Segment_ID"] != NOT_SET:
       self.current_predicative_segment["Length"] = psd_05["PSD_Pos_Segmentlaenge"]
       
@@ -444,8 +445,11 @@ class SpeedLimitManager:
     if location_reason != BendPreviewReason.none:
       return self._bend_preview(location_reason, map_confidence)
 
-    total_distance = self.current_predicative_segment.get("Length", NOT_SET)
     now = time.time()
+    if now - self.current_predicative_segment.get("Timestamp", NOT_SET) > SEGMENT_DECAY:
+      return self._bend_preview(BendPreviewReason.staleSegment, map_confidence)
+
+    total_distance = self.current_predicative_segment.get("Length", NOT_SET)
     segment_id = current_id
     visited = {current_id}
     earliest_valid = None

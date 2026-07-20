@@ -134,6 +134,44 @@ def test_ten_second_stale_segment_is_rejected(monkeypatch):
   assert result.rejection_reason == BendPreviewReason.staleSegment
 
 
+def test_ten_second_stale_current_location_is_rejected(monkeypatch):
+  manager = manager_with_unique_path(monkeypatch)
+  for segment in manager.predicative_segments.values():
+    segment["Timestamp"] = NOW + 10.1
+  monkeypatch.setattr("opendbc.car.volkswagen.speed_limit_manager.time.time", lambda: NOW + 10.1)
+
+  result = manager.get_bend_preview(current_speed_ms=30.0)
+
+  assert not result.valid
+  assert result.rejection_reason == BendPreviewReason.staleSegment
+
+
+def test_unsafe_later_curve_beats_an_earlier_safe_curve(monkeypatch):
+  manager = make_manager(monkeypatch)
+  add_segment(manager, psd_04(1, 0, 100.0), 40.0)
+  add_segment(manager, psd_04(2, 1, 25.0, curvature_end=205), 40.0)
+  add_segment(manager, psd_04(3, 2, 25.0, curvature_end=55), 40.0)
+
+  result = manager.get_bend_preview(current_speed_ms=30.0)
+
+  assert result.valid
+  assert result.curvature == pytest.approx(0.004)
+  assert result.distance == pytest.approx(90.0)
+
+
+def test_earliest_valid_curve_is_returned_when_all_curves_are_safe(monkeypatch):
+  manager = make_manager(monkeypatch)
+  add_segment(manager, psd_04(1, 0, 100.0), 40.0)
+  add_segment(manager, psd_04(2, 1, 25.0, curvature_end=205), 40.0)
+  add_segment(manager, psd_04(3, 2, 25.0, curvature_end=155), 40.0)
+
+  result = manager.get_bend_preview(current_speed_ms=30.0)
+
+  assert result.valid
+  assert result.curvature == pytest.approx(0.001)
+  assert result.distance == pytest.approx(65.0)
+
+
 def test_signed_curvature_and_raw_quality_are_preserved(monkeypatch):
   manager = manager_with_unique_path(monkeypatch, bend_end_curvature=0.004, bend_sign=1,
                                      map_match_quality=2, geometry_quality=3)
